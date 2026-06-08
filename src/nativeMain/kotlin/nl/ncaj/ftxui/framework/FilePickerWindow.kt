@@ -202,6 +202,11 @@ open class FilePickerWindow(
 // POSIX helpers
 // -----------------------------------------------------------------------
 
+// `mode_t` and `stat.st_mode` resolve to integer types of different bit widths on macOS vs Linux,
+// so the stat lookup is implemented per-target and exposed here through a width-safe type.
+internal class PathInfo(val isDirectory: Boolean, val sizeBytes: Long)
+internal expect fun statPath(path: String): PathInfo?
+
 @OptIn(ExperimentalForeignApi::class)
 private fun listDirectory(path: String): List<FileEntry>? {
     val dir = opendir(path) ?: return null
@@ -211,16 +216,8 @@ private fun listDirectory(path: String): List<FileEntry>? {
             val entry = readdir(dir) ?: break
             val name = entry.pointed.d_name.toKString()
             if (name == "." || name == "..") continue
-            val fullPath = "$path/$name"
-            memScoped {
-                val st = alloc<stat>()
-                if (stat(fullPath, st.ptr) == 0) {
-                    val isDir = st.st_mode.toInt() and S_IFMT == S_IFDIR
-                    entries.add(FileEntry(name, isDir, st.st_size))
-                } else {
-                    entries.add(FileEntry(name, false, 0L))
-                }
-            }
+            val info = statPath("$path/$name")
+            entries.add(FileEntry(name, info?.isDirectory ?: false, info?.sizeBytes ?: 0L))
         }
     } finally {
         closedir(dir)

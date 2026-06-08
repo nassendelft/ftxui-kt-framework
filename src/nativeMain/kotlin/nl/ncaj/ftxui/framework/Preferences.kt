@@ -3,6 +3,10 @@ package nl.ncaj.ftxui.framework
 import kotlinx.cinterop.*
 import platform.posix.*
 
+// `mode_t` resolves to integer types of different bit widths on macOS vs Linux,
+// so creating the directory is implemented per-target with a width-safe signature.
+internal expect fun makeDirectory(path: String)
+
 @OptIn(ExperimentalForeignApi::class)
 object Preferences {
     private var filePath: String = ""
@@ -11,7 +15,7 @@ object Preferences {
     fun init(appName: String) {
         val home = getenv("HOME")?.toKString() ?: return
         val dir = "$home/.config/$appName"
-        mkdir(dir, 493u) // 0755
+        makeDirectory(dir) // 0755
         filePath = "$dir/prefs.properties"
         load()
     }
