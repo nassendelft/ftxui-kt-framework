@@ -1,0 +1,49 @@
+name: Publish ftxui-kt-framework
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform_task: publishLinuxX64PublicationToSonatype
+            publish_metadata: true
+          - os: macos-latest
+            platform_task: publishMacosArm64PublicationToSonatype
+            publish_metadata: false
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Publish platform artifact
+        run: ./gradlew ${{ matrix.platform_task }} -PpublishVersion=${{ steps.version.outputs.version }}
+        env:
+          SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
+          PGP_KEY: ${{ secrets.PGP_KEY }}
+          PGP_PASSWORD: ${{ secrets.PGP_PASSWORD }}
+
+      - name: Publish multiplatform metadata
+        if: matrix.publish_metadata
+        run: ./gradlew publishKotlinMultiplatformPublicationToSonatype -PpublishVersion=${{ steps.version.outputs.version }}
+        env:
+          SONATYPE_AUTH_TOKEN: ${{ secrets.SONATYPE_AUTH_TOKEN }}
+          PGP_KEY: ${{ secrets.PGP_KEY }}
+          PGP_PASSWORD: ${{ secrets.PGP_PASSWORD }}
