@@ -24,6 +24,7 @@ open class TableView<T>(
     private val onStateChange: ((TableState<T>) -> Unit)? = null,
     private val onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
     private val keybindings: TableKeybindings = TableKeybindings(),
+    private val style: TableStyle = TableStyle(),
 ) : InputReceiver {
 
     @Volatile private var state: TableState<T> = TableState(emptyList())
@@ -116,9 +117,15 @@ open class TableView<T>(
                 sortColumn == i && !sortAscending -> " ▼"
                 else -> ""
             }
-            val headerText = col.header + indicator
-            col.renderHeader?.invoke(headerText, colWidths[i])
-                ?: text(headerText.padEnd(colWidths[i] + 3)).bold()
+            col.renderHeader?.invoke(col.header + indicator, colWidths[i])
+                ?: run {
+                    val headerEl = text(col.header.padEnd(colWidths[i] + 3 - indicator.length))
+                        .bold()
+                        .let { t -> style.headerForeground?.let { c -> t.color(c) } ?: t }
+                    if (indicator.isEmpty()) headerEl
+                    else hbox(headerEl, text(indicator).bold()
+                        .let { t -> style.sortIndicatorColor?.let { c -> t.color(c) } ?: t })
+                }
         }
         val headerEl = hbox(*headerCells.toTypedArray())
 
@@ -129,7 +136,16 @@ open class TableView<T>(
                 col.renderCell?.invoke(row, colWidths[ci], focused)
                     ?: run {
                         val el = text(col.extract(row).padEnd(colWidths[ci] + 3))
-                        if (focused) el.inverted() else el
+                        if (focused) {
+                            val fg = style.focusedRowForeground
+                            val bg = style.focusedRowBackground
+                            when {
+                                fg != null && bg != null -> el.color(fg).bgcolor(bg)
+                                fg != null -> el.color(fg)
+                                bg != null -> el.bgcolor(bg)
+                                else -> el.inverted()
+                            }
+                        } else el
                     }
             }
             hbox(*cells.toTypedArray())
@@ -138,7 +154,7 @@ open class TableView<T>(
         val emptyRows = (0 until visH - slice.size).map { text("") }
         val dataEl = hbox(
             vbox(*dataRows.toTypedArray(), *emptyRows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, rows.size, visH),
+            vScrollBar(scrollOffset, rows.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         return vbox(headerEl, separator(), dataEl)

@@ -209,6 +209,7 @@ open class ListView<T>(
     private val onStateChange: ((ListState<T>) -> Unit)? = null,
     private val onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
     keybindings: ListKeybindings = ListKeybindings(),
+    private val style: ListStyle = ListStyle(),
 ) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
 
     @Volatile private var state: ListState<T> = ListState(emptyList())
@@ -299,7 +300,7 @@ open class ListView<T>(
 
         val listRow = hbox(
             vbox(*items.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, entries.size, listH),
+            vScrollBar(scrollOffset, entries.size, listH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         return if (swComp != null) {

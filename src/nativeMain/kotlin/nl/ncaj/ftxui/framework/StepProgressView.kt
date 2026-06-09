@@ -22,6 +22,7 @@ data class StepProgressState(
 open class StepProgressView(
     private val onStateChange: ((StepProgressState) -> Unit)? = null,
     private val keybindings: StepProgressKeybindings = StepProgressKeybindings(),
+    private val style: StepProgressStyle = StepProgressStyle(),
 ) : InputReceiver {
 
     private val spinnerFrames = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -149,10 +150,10 @@ open class StepProgressView(
     }
 
     private fun statusStyle(status: StepStatus, tick: Int): Pair<String, Color> = when (status) {
-        StepStatus.Pending -> "○" to Color.GrayDark
-        StepStatus.Running -> spinnerFrames[tick % spinnerFrames.size] to Theme.current.accent
-        StepStatus.Done    -> "✓" to Theme.current.success
-        StepStatus.Failed  -> "✗" to Theme.current.error
-        StepStatus.Skipped -> "—" to Color.GrayLight
+        StepStatus.Pending -> "○" to style.pendingColor.or(Theme.current.muted)
+        StepStatus.Running -> spinnerFrames[tick % spinnerFrames.size] to style.runningColor.or(Theme.current.accent)
+        StepStatus.Done    -> "✓" to style.doneColor.or(Theme.current.success)
+        StepStatus.Failed  -> "✗" to style.failedColor.or(Theme.current.error)
+        StepStatus.Skipped -> "—" to style.skippedColor.or(Theme.current.mutedForeground)
     }
 }

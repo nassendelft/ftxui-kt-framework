@@ -30,6 +30,7 @@ open class FilePickerView(
     val rowContent: ((entry: FileEntry, focused: Boolean) -> Element)? = null,
     private val onStateChange: ((FilePickerState) -> Unit)? = null,
     private val keybindings: FilePickerKeybindings = FilePickerKeybindings(),
+    private val style: FilePickerStyle = FilePickerStyle(),
 ) : InputReceiver {
 
     @Volatile private var currentPath: String = resolvePath(initialPath)
@@ -188,14 +189,14 @@ open class FilePickerView(
 
         val pathEl = hbox(
             text("  ").dim(),
-            text(currentPath).color(Theme.current.accent),
+            text(currentPath).color(style.pathColor.or(Theme.current.accent)),
             if (showHidden) text("  [.hidden]").dim() else emptyElement(),
             text("  "),
         )
 
         val listRow = hbox(
             vbox(*rows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, visible.size, listH),
+            vScrollBar(scrollOffset, visible.size, listH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         val main = vbox(pathEl, separator(), listRow)
@@ -213,8 +214,12 @@ open class FilePickerView(
         if (rowContent != null) return rowContent(entry, focused)
         val icon = if (entry.isDirectory) "[d]" else "   "
         val size = if (entry.isDirectory) "" else formatSize(entry.sizeBytes).padStart(8)
+        val entryColor = if (entry.isDirectory)
+            style.directoryColor.or(Theme.current.directoryColor)
+        else
+            style.fileColor.or(Theme.current.fileColor)
         val row = hbox(
-            text("  $icon ").color(if (entry.isDirectory) Theme.current.accent else Color.Default),
+            text("  $icon ").color(entryColor),
             text(entry.name).flex(),
             text("  $size  ").dim(),
         )

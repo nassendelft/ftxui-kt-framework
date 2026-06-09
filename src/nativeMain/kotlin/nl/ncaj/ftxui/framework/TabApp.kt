@@ -16,11 +16,12 @@ fun runTabApp(
     tabs: List<Tab>,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
+    tabBarStyle: TabBarStyle = TabBarStyle(),
 ) {
     require(tabs.isNotEmpty()) { "TabApp requires at least one tab" }
     val app = FtxUIApp.fullscreen()
     if (enableCtrlZ) app.forceHandleCtrlZ(false)
-    val runner = TabAppRunner(app, tabs, confirmOnQuit)
+    val runner = TabAppRunner(app, tabs, confirmOnQuit, tabBarStyle)
     runner.start()
 }
 
@@ -159,6 +160,7 @@ internal class TabAppRunner(
     app: FtxUIApp,
     tabs: List<Tab>,
     confirmOnQuit: Boolean,
+    private val style: TabBarStyle = TabBarStyle(),
 ) : BaseAppRunner(app, confirmOnQuit) {
 
     private val contexts: List<TabContext>
@@ -219,13 +221,16 @@ internal class TabAppRunner(
     }
 
     private fun buildTabBar(): Element {
+        val activeFg = style.activeTabForeground.or(Theme.current.accent)
         val tabs = contexts.mapIndexed { i, ctx ->
             val active = i == activeTabIndex
             val label = " ${ctx.label} "
-            if (active) text(label).color(Theme.current.accent).bold().underlined()
-            else text(label).dim()
+            if (active) text(label).color(activeFg).bold().underlined()
+            else text(label).let { t -> style.inactiveTabForeground?.let { t.color(it) } ?: t.dim() }
         }
+        val bs = style.borderStyle.or(Theme.current.borderStyle)
+        val bc = style.borderColor
         return hbox(text(" "), *tabs.toTypedArray(), filler(), text("  ^Tab").dim(), text(" "))
-            .borderStyled(BorderStyle.Light)
+            .let { if (bc != null) it.borderStyled(bs, bc) else it.borderStyled(bs) }
     }
 }

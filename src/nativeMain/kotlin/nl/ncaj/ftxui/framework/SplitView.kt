@@ -11,6 +11,7 @@ open class SplitView(
     private val focusedPane: Focus? = null,
     private val onFocusChanged: ((Focus) -> Unit)? = null,
     private val keybindings: SplitKeybindings = SplitKeybindings(),
+    private val style: SplitStyle = SplitStyle(),
 ) : InputReceiver {
 
     enum class Focus { LEFT, RIGHT }
@@ -37,10 +38,29 @@ open class SplitView(
         return container.decorateRender {
             val leftEl = leftComp.render()
             val rightEl = rightComp.render()
-            val l = if (leftTitle.isEmpty()) leftEl else leftEl.window(text(" $leftTitle ").bold())
-            val r = if (rightTitle.isEmpty()) rightEl else rightEl.window(text(" $rightTitle ").bold())
-            val leftFinal = if (leftComp.focused) l else l.dim()
-            val rightFinal = if (rightComp.focused) r else r.dim()
+            val activeFg = style.activeTitleForeground.or(Theme.current.accent)
+            val l = if (leftTitle.isEmpty()) leftEl
+                    else if (leftComp.focused) leftEl.window(text(" $leftTitle ").color(activeFg).bold())
+                    else leftEl.window(text(" $leftTitle ").let { t ->
+                        style.inactiveTitleForeground?.let { t.color(it) } ?: t
+                    })
+            val r = if (rightTitle.isEmpty()) rightEl
+                    else if (rightComp.focused) rightEl.window(text(" $rightTitle ").color(activeFg).bold())
+                    else rightEl.window(text(" $rightTitle ").let { t ->
+                        style.inactiveTitleForeground?.let { t.color(it) } ?: t
+                    })
+            val activeBs = style.activeBorderStyle.or(Theme.current.focusedBorderStyle)
+            val inactiveBs = style.borderStyle.or(Theme.current.borderStyle)
+            val leftFinal = if (leftComp.focused) {
+                (if (leftTitle.isEmpty()) l.borderStyled(activeBs) else l).let { it }
+            } else {
+                (if (leftTitle.isEmpty() && style.borderStyle != null) l.borderStyled(inactiveBs) else l).dim()
+            }
+            val rightFinal = if (rightComp.focused) {
+                (if (rightTitle.isEmpty()) r.borderStyled(activeBs) else r).let { it }
+            } else {
+                (if (rightTitle.isEmpty() && style.borderStyle != null) r.borderStyled(inactiveBs) else r).dim()
+            }
             hbox(leftFinal.flex(), rightFinal.flex())
         }
     }

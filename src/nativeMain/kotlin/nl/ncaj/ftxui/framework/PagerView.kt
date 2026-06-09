@@ -16,6 +16,7 @@ data class PagerState(
 open class PagerView(
     private val onStateChange: ((PagerState) -> Unit)? = null,
     private val keybindings: PagerKeybindings = PagerKeybindings(),
+    private val style: PagerStyle = PagerStyle(),
 ) : InputReceiver {
 
     @Volatile private var state: PagerState = PagerState(emptyList())
@@ -136,7 +137,9 @@ open class PagerView(
                 text(line)
 
             if (state.showLineNumbers) {
-                hbox(text("${(absLine + 1).toString().padStart(lineNumWidth)} ").dim(), lineEl)
+                val lineNumEl = text("${(absLine + 1).toString().padStart(lineNumWidth)} ")
+                    .let { t -> style.lineNumberColor?.let { c -> t.color(c) } ?: t.dim() }
+                hbox(lineNumEl, lineEl)
             } else {
                 lineEl
             }
@@ -144,7 +147,7 @@ open class PagerView(
 
         val contentEl = hbox(
             vbox(*rows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, lines.size, contentH),
+            vScrollBar(scrollOffset, lines.size, contentH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         if (!hasSearch) return contentEl
@@ -168,7 +171,8 @@ open class PagerView(
         val before = line.substring(0, idx)
         val match  = line.substring(idx, idx + query.length)
         val after  = line.substring(idx + query.length)
-        return hbox(text(before), text(match).color(Theme.current.accent).bold(), text(after))
+        val highlightColor = style.searchHighlight.or(Theme.current.accent)
+        return hbox(text(before), text(match).color(highlightColor).bold(), text(after))
     }
 
     private fun recomputeMatches() {

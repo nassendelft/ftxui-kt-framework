@@ -24,6 +24,7 @@ open class TreeView<T>(
     private val onStateChange: ((TreeState<T>) -> Unit)? = null,
     private val onSelectionChanged: ((focusedNode: TreeNode<T>?) -> Unit)? = null,
     private val keybindings: TreeKeybindings = TreeKeybindings(),
+    private val style: TreeStyle = TreeStyle(),
 ) : InputReceiver {
 
     @Volatile private var state: TreeState<T> = TreeState(emptyList())
@@ -123,18 +124,28 @@ open class TreeView<T>(
         val rows = flat.subList(start, end).map { item ->
             val focused = item.path == focusedPath
             val prefix = when {
-                item.node.children.isEmpty() -> "  "
-                item.node.isExpanded         -> "▾ "
-                else                         -> "▸ "
+                item.node.children.isEmpty() -> style.leafIndent
+                item.node.isExpanded         -> style.expandedIcon
+                else                         -> style.collapsedIcon
             }
-            hbox(
+            val row = hbox(
                 text("  ".repeat(item.depth) + prefix),
                 renderNode(item.node.data, item.depth, focused, item.node.children.isNotEmpty(), item.node.isExpanded),
             )
+            if (focused) {
+                val fg = style.focusedNodeForeground
+                val bg = style.focusedNodeBackground
+                when {
+                    fg != null && bg != null -> row.color(fg).bgcolor(bg)
+                    fg != null -> row.color(fg)
+                    bg != null -> row.bgcolor(bg)
+                    else -> row
+                }
+            } else row
         }
         return hbox(
             vbox(*rows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, flat.size, visibleH),
+            vScrollBar(scrollOffset, flat.size, visibleH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
     }
 

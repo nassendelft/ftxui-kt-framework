@@ -14,6 +14,7 @@ open class DashboardView(
     val columns: Int = 2,
     private val onFocusedCellChanged: ((Int) -> Unit)? = null,
     private val keybindings: DashboardKeybindings = DashboardKeybindings(),
+    private val style: DashboardStyle = DashboardStyle(),
 ) : InputReceiver {
 
     @Volatile private var focusedCell: Int = 0
@@ -112,10 +113,15 @@ open class DashboardView(
 
     private fun buildCell(cell: DashboardCell, comp: Component, focused: Boolean, width: Int, height: Int): Element {
         val content = comp.render()
+        val focusedFg = style.focusedTitleForeground.or(Theme.current.accent)
+        val titleEl = text(" ${cell.title} ").let { t ->
+            if (focused) t.color(focusedFg).bold()
+            else style.unfocusedTitleForeground?.let { c -> t.color(c) } ?: t.dim()
+        }
         val titled = content
             .size(WidthOrHeight.Width,  Constraint.Equal, width  - 2)
             .size(WidthOrHeight.Height, Constraint.Equal, height - 2)
-            .window(text(" ${cell.title} ").let { if (focused) it.color(Theme.current.accent).bold() else it.dim() })
+            .window(titleEl)
         return if (focused) titled else titled.dim()
     }
 }
