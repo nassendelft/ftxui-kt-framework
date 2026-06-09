@@ -16,6 +16,7 @@ open class TextEditorView(
     val onContentChange: ((String) -> Unit)? = null,
     private val onStateChange: ((TextEditorState) -> Unit)? = null,
     private val keybindings: TextEditorKeybindings = TextEditorKeybindings(),
+    private val style: TextEditorStyle = TextEditorStyle(),
 ) : InputReceiver {
 
     @Volatile private var lines: MutableList<String> = mutableListOf("")
@@ -237,8 +238,10 @@ open class TextEditorView(
             val absLine = scrollOffset + i
             val lineEl = if (absLine == cursorLine) renderCursorLine(line) else text(line.ifEmpty { " " })
             if (showNums) {
+                val numText = text("${(absLine + 1).toString().padStart(lineNumWidth)} ")
+                val styledNum = style.lineNumbersColor?.let { numText.color(it) } ?: numText.dim()
                 hbox(
-                    text("${(absLine + 1).toString().padStart(lineNumWidth)} ").dim(),
+                    styledNum,
                     lineEl.flex(),
                 )
             } else {
@@ -248,13 +251,17 @@ open class TextEditorView(
 
         // Fill remaining height with empty rows
         val filled = rows + (rows.size until visH).map {
-            if (showNums) hbox(text(" ".repeat(lineNumWidth + 1)).dim(), text(" ").flex())
+            if (showNums) {
+                val fillerText = text(" ".repeat(lineNumWidth + 1))
+                val styledFiller = style.lineNumbersColor?.let { fillerText.color(it) } ?: fillerText.dim()
+                hbox(styledFiller, text(" ").flex())
+            }
             else text(" ")
         }
 
         return hbox(
             vbox(*filled.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, lines.size, visH),
+            vScrollBar(scrollOffset, lines.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
     }
 
@@ -263,9 +270,20 @@ open class TextEditorView(
         val before = line.substring(0, col)
         val cursorChar = if (col < line.length) line[col].toString() else " "
         val after = if (col < line.length) line.substring(col + 1) else ""
+        val cursorEl = text(cursorChar)
+        val styledCursor = run {
+            val fg = style.cursorForeground
+            val bg = style.cursorBackground
+            when {
+                fg != null && bg != null -> cursorEl.color(fg).bgcolor(bg)
+                fg != null -> cursorEl.color(fg)
+                bg != null -> cursorEl.bgcolor(bg)
+                else -> cursorEl.inverted()
+            }
+        }
         return hbox(
             if (before.isNotEmpty()) text(before) else emptyElement(),
-            text(cursorChar).inverted(),
+            styledCursor,
             if (after.isNotEmpty()) text(after) else emptyElement(),
         )
     }

@@ -293,8 +293,24 @@ open class ListView<T>(
         val items = entries.subList(start, end).mapIndexed { i, entry ->
             val absoluteIndex = start + i
             when (entry) {
-                is ListEntry.Header -> renderHeader(entry.data)
-                is ListEntry.Item -> renderItem(entry.data, absoluteIndex == focusedIndex)
+                is ListEntry.Header -> {
+                    val el = renderHeader(entry.data)
+                    style.headerForeground?.let { el.color(it) } ?: el
+                }
+                is ListEntry.Item -> {
+                    val focused = absoluteIndex == focusedIndex
+                    val el = renderItem(entry.data, focused)
+                    if (focused) {
+                        val fg = style.focusedItemForeground
+                        val bg = style.focusedItemBackground
+                        when {
+                            fg != null && bg != null -> el.color(fg).bgcolor(bg)
+                            fg != null -> el.color(fg)
+                            bg != null -> el.bgcolor(bg)
+                            else -> el
+                        }
+                    } else el
+                }
             }
         }
 

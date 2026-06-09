@@ -14,6 +14,7 @@ open class PaginatedListView<T>(
     private val onSelect: ((ListEntry.Item<T>) -> Unit)? = null,
     private val onTotalCount: (() -> Int?)? = null,
     keybindings: ListKeybindings = ListKeybindings(),
+    private val style: ListStyle = ListStyle(),
 ) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
 
     @Volatile private var items: List<ListEntry<T>> = emptyList()
@@ -65,8 +66,24 @@ open class PaginatedListView<T>(
         val rows = slice.mapIndexed { i, entry ->
             @Suppress("UNCHECKED_CAST")
             when (entry) {
-                is ListEntry.Header -> renderHeader(entry.data)
-                is ListEntry.Item   -> renderItem(entry.data, (start + i) == ensuredFocus)
+                is ListEntry.Header -> {
+                    val el = renderHeader(entry.data)
+                    style.headerForeground?.let { el.color(it) } ?: el
+                }
+                is ListEntry.Item   -> {
+                    val focused = (start + i) == ensuredFocus
+                    val el = renderItem(entry.data, focused)
+                    if (focused) {
+                        val fg = style.focusedItemForeground
+                        val bg = style.focusedItemBackground
+                        when {
+                            fg != null && bg != null -> el.color(fg).bgcolor(bg)
+                            fg != null -> el.color(fg)
+                            bg != null -> el.bgcolor(bg)
+                            else -> el
+                        }
+                    } else el
+                }
             }
         }
 
@@ -78,7 +95,7 @@ open class PaginatedListView<T>(
         val allRows = rows + loadingRow
         val listEl = hbox(
             vbox(*allRows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, all.size + (if (isLoadingMore) 1 else 0), listH),
+            vScrollBar(scrollOffset, all.size + (if (isLoadingMore) 1 else 0), listH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         val bottomEl = if (statusRow != null) vbox(listEl, separator(), statusRow) else listEl

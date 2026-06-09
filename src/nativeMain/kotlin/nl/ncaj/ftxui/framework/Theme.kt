@@ -148,6 +148,16 @@ data class FilePickerStyle(
     val scrollThumb: Color? = null,
 )
 
+/**
+ * Controls the text editor rendering.
+ */
+data class TextEditorStyle(
+    val lineNumbersColor: Color? = null,
+    val cursorForeground: Color? = null,
+    val cursorBackground: Color? = null,
+    val scrollThumb: Color? = null,
+)
+
 // ---------------------------------------------------------------------------
 // Theme singleton
 // ---------------------------------------------------------------------------
