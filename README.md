@@ -1,6 +1,6 @@
 # ftxui-kt-framework
 
-An opinionated TUI application framework for Kotlin Multiplatform Native, built on top of [ftxui-kt](https://github.com/nassendelft/ftxui-kt). It provides a Screen / ViewModel / Window architecture, a navigation stack, built-in windows, and framework-level overlays (help, toasts, dialogs, logging, preferences) so you can focus on writing application logic rather than plumbing.
+An opinionated TUI application framework for Kotlin Multiplatform Native, built on top of [ftxui-kt](https://github.com/nassendelft/ftxui-kt). It provides a Screen / Component architecture, a navigation stack, built-in views, and framework-level overlays (help, toasts, dialogs, logging, preferences) so you can focus on writing application logic rather than plumbing.
 
 **Targets:** macOS ARM64, Linux x64  
 **Kotlin:** 2.3.21
@@ -9,69 +9,79 @@ An opinionated TUI application framework for Kotlin Multiplatform Native, built 
 
 ## Architecture
 
-The framework follows a strict unidirectional data flow:
+The framework follows a declarative and component-based UI architecture with a clean unidirectional flow:
 
 ```
-ViewModel (StateFlow)
-    ↓  state
-  Screen (layout + shortcuts)
-    ↓  state slice
-  Window (dumb renderer)
-    ↑  callbacks / events
-  ViewModel
+Screen (layout + shortcuts)
+   ↓  builds (once)
+Component (persistent views/layout)
+   ↓  subscribes to
+State (local or ViewModel StateFlow)
+   ↑  triggers redraw on change
+ScreenContext.requestRedraw()
 ```
 
 ### Screen
 
-A `Screen<S, E>` is a full-screen container. Subclass it to define layout and keyboard shortcuts.
+A `Screen` is a full-screen container. Subclass it to define layouts, keyboard shortcuts, and active focus. Unlike traditional model-driven views, screens build their content hierarchy once in `buildContent` and manage reactivity by redrawing the UI when state changes.
 
 ```kotlin
-class MyScreen : Screen<MyState, MyEvent>() {
-    override val viewModel = MyViewModel()
+class MyScreen : Screen() {
+    private var count by context.mutableStateOf(0) // Local reactive state
+    private val myListView: Component by lazy { ... }
 
     override val globalShortcuts = listOf(
         Shortcut(Key.CtrlS, "^S  Save", description = "Save changes") {
-            viewModel.onEvent(MyEvent.Save)
+            saveData()
         },
     )
 
-    private val list = object : ListWindow<MyItem>(...) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    // Specifies which component receives key events by default
+    override val activeWindow get() = myListView
 
-    override val activeWindow get() = list
-
-    override fun buildContent(state: MyState): Component =
-        list.render(ListState(state.items.map { ListEntry.Item(it) }))
-}
-```
-
-`handleInput` dispatches in priority order: active window → screen shortcuts → Esc/Backspace (pop).
-
-### ViewModel
-
-A `ViewModel<S, E>` owns state and processes events.
-
-```kotlin
-class MyViewModel : ViewModel<MyState, MyEvent>() {
-    private val _state = MutableStateFlow(MyState())
-    override val state: StateFlow<MyState> = _state
-
-    override fun onEvent(event: MyEvent) {
-        when (event) {
-            MyEvent.Save -> _state.value = _state.value.copy(saved = true)
-        }
+    override fun buildContent(context: ScreenContext): Component {
+        // Built once; reacts to `count` updates automatically triggering redraw
+        return context.listView(
+            getEntries = { getItems(count) },
+            renderItem = { item, focused ->
+                if (focused) text(item.name).inverted() else text(item.name)
+            },
+            renderHeader = { name -> hbox(text("── $name ──").bold(), filler()) }
+        )
     }
 }
 ```
 
-### Window
+`handleInput` dispatches keyboard events in priority order: active component (`activeWindow`) → screen global shortcuts → Esc/Backspace (pop screen).
 
-A `Window<S>` is a dumb renderer. It holds only volatile scroll/focus state — it never owns application state. Call `render(state)` to get a `Component`, and override `onInput` to consume keys before screen shortcuts.
+### State & Reactivity
+
+Reactivity in screens can be managed in two ways:
+
+1. **Local State (`mutableStateOf`)**: A Compose-like delegate available on `ScreenContext`. Mutating a variable defined with `mutableStateOf` automatically schedules a screen redraw.
+   ```kotlin
+   var selectedIndex by context.mutableStateOf(0)
+   ```
+
+2. **Flow / ViewModel State**: Screens can declare a traditional `ViewModel`. To react to its state changes, launch a coroutine to collect the state flow and request a redraw:
+   ```kotlin
+   override fun buildContent(context: ScreenContext): Component {
+       GlobalScope.launch {
+           viewModel.state.collect {
+               context.requestRedraw()
+           }
+       }
+       // ... build component using viewModel.state.value ...
+   }
+   ```
+
+### Views & Components
+
+Views are not subclassed classes anymore; they are declarative `Component` functions built as extensions on `ScreenContext` (e.g. `listView`, `tableView`, `splitView`). Under the hood, they wrap native FTXUI focus and event handling logic, and accept lambda retrievers (e.g., `getEntries = { ... }`) to pull state dynamically on render.
 
 ### Navigator
 
-`Navigator` is injected into `handleInput`. Use it to navigate and show UI:
+`Navigator` is passed to input handlers and screen builders. Use it to push/pop screens or show global UI overlays:
 
 ```kotlin
 override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -111,187 +121,244 @@ fun main() {
             Tab("Settings"){ SettingsScreen() },
         ),
         confirmOnQuit = true,
+        tabBarStyle = TabBarStyle(
+            activeTabForeground = Color.Cyan,
+            borderStyle = BorderStyle.Light
+        )
     )
 }
 ```
 
-Tab navigation: `Alt+H` / `Alt+L`. Each tab has its own independent navigation stack and overlays.
+Tab navigation uses `Alt+H` / `Alt+L` to switch tabs. Each tab maintains its own independent navigation stack and modal overlays.
 
 ---
 
-## Built-in Windows
+## Built-in Views
 
-### ListWindow\<T\>
+All views are instantiated via `ScreenContext` extension methods and return a standard FTXUI `Component`.
 
-Scrollable list with optional headers, fuzzy search, and vim-style navigation.
+### listView
+
+Scrollable list with headers, fuzzy search, and vim-style navigation.
 
 ```kotlin
-val list = object : ListWindow<Fruit>(
+val list = context.listView(
+    getEntries = {
+        buildList {
+            add(ListEntry.Header("Fruits"))
+            fruits.forEach { add(ListEntry.Item(it) { navigator.push(DetailScreen(it)) }) }
+        }
+    },
     renderItem = { fruit, focused ->
         if (focused) text(fruit.name).inverted() else text(fruit.name)
     },
-    renderHeader = { fruit -> hbox(text("── ${fruit.name} ──").bold(), filler()) },
+    renderHeader = { name -> hbox(text("── $name ──").bold(), filler()) },
     toSearchString = { it.name },
-) {
-    override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-}
-
-// Render:
-list.render(ListState(buildList {
-    add(ListEntry.Header(Fruit("Fruits", "")))
-    fruits.forEach { add(ListEntry.Item(it) { navigator.push(DetailScreen(it)) }) }
-}))
+    style = ListStyle(focusedItemBackground = Color.Blue)
+)
 ```
 
-Keys: `j`/`k` navigate, `g`/`G` top/bottom, `Ctrl+U`/`D` half-page, `/` fuzzy search.
+Keys: `j`/`k` navigate, `g`/`G` top/bottom, `Ctrl+U`/`D` half-page, `/` to activate fuzzy search.
 
-Call `listWindow.updateState(newState)` from a coroutine to update the list reactively without rebuilding the screen.
-
-### TableWindow\<T\>
+### tableView
 
 Sortable table with customisable column renderers.
 
 ```kotlin
-val table = object : TableWindow<FruitRow>(
+val table = context.tableView(
+    getRows = { FRUIT_ROWS },
     columns = listOf(
         TableColumn("Name", extract = { it.name }),
-        TableColumn("Category", extract = { it.category }),
+        TableColumn(
+            header = "Category",
+            extract = { it.category },
+            renderCell = { item, width, focused ->
+                val color = if (item.category == "Fruit") Color.Green else Color.Yellow
+                val el = text(item.category.padEnd(width + 3)).color(color)
+                if (focused) el.inverted() else el
+            }
+        ),
     ),
-    onEnter = { row -> navigator.push(DetailScreen(row)) },
-) {
-    override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-}
+    onEnter = { row -> navigator.push(DetailScreen(row)) }
+)
 ```
 
-Keys: `j`/`k` navigate, `s` cycles column sort (▲ / ▼ / off), `Enter` fires `onEnter`.
+Keys: `j`/`k` navigate, `s` cycles column sort (▲ / ▼ / off), `Enter` triggers `onEnter`.
 
-### PagerWindow
+### pagerView
 
-Read-only scrollable text with incremental search.
+Read-only scrollable text panel with incremental search.
 
 ```kotlin
-val pager = object : PagerWindow() {
-    override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-}
-// state:
-pager.render(PagerState(lines = myLines, showLineNumbers = true))
+val pager = context.pagerView(
+    getState = { PagerState(lines = myLines, showLineNumbers = true) }
+)
 ```
 
 Keys: `j`/`k`/`g`/`G` scroll, `/` search, `n`/`N` next/prev match.
 
-### TreeWindow\<T\>
+### treeView
 
-Hierarchical tree with expand/collapse.
+Hierarchical tree with expand/collapse nodes.
 
 ```kotlin
-val tree = object : TreeWindow<String>(
-    renderNode = { label, _, focused, _, _ ->
+val tree = context.treeView(
+    getState = { TreeState(roots) },
+    renderNode = { label, depth, focused, hasChildren, isExpanded ->
         if (focused) text(label).inverted() else text(label)
     }
-) {
-    override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-}
-// state (attach callbacks before passing):
-tree.render(TreeState(roots))
+)
 ```
 
-`TreeNode<T>` holds `children`, `isExpanded`, and an optional `onToggle` callback. Toggle expand/collapse by emitting an event from `onToggle` to the ViewModel, updating the tree, and re-rendering.
+Create a tree of `TreeNode<T>` which defines `children`, `isExpanded`, and optional `onToggle`/`onEnter` callbacks.
 
-### SplitWindow\<L, R\>
+### splitView
 
-Two windows side by side; Tab/Shift+Tab switches focus; inactive panel is dimmed.
+Two components side-by-side; Tab/Shift+Tab switches focus, and the inactive panel is dimmed automatically.
 
 ```kotlin
-val split = SplitWindow(leftWindow, rightWindow, leftTitle = "Left", rightTitle = "Right")
-split.render(leftState to rightState)
+val split = context.splitView(
+    left = leftComponent,
+    right = rightComponent,
+    leftTitle = "Left Pane",
+    rightTitle = "Right Pane"
+)
 ```
 
-### TextEditorWindow
+### textEditorView
 
-Multiline editor with built-in undo/redo. Requires `enableCtrlZ = true` in `runApp()`.
+Multiline text editor with built-in undo/redo stack. Requires `enableCtrlZ = true` in `runApp()`.
 
 ```kotlin
-val editor = object : TextEditorWindow() {
-    override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-}
-// read content:
-val lines: List<String> = editor.lines
+var text = "Initial Text"
+
+val editor = context.textEditorView(
+    content = ::text, // KMutableProperty0<String>
+    showLineNumbers = true,
+    onContentChange = { newText -> Logger.debug("Text length: ${newText.length}") },
+    onStateChange = { newState ->
+        // Capture editor state (cursor position, scroll offset)
+        editorState = newState
+        context.requestRedraw()
+    }
+)
 ```
 
-Keys: arrow keys, `Ctrl+Z`/`Y` undo/redo, line numbers shown automatically.
+Keys: Arrow keys, `Ctrl+Z`/`Y` undo/redo. Line numbers are rendered automatically.
 
-### FilePickerWindow
+### filePickerView
 
 POSIX filesystem browser.
 
 ```kotlin
-FilePickerWindow(
-    initialPath = Path("/home/user"),
+val picker = context.filePickerView(
+    initialPath = ".",
     onFileSelected = { path -> navigator.pop(); handleFile(path) },
     showHiddenInitially = false,
-    filter = { it.name.endsWith(".kt") },
+    filter = { entry -> entry.name.endsWith(".kt") }
 )
 ```
 
 Keys: `j`/`k` navigate, `Enter` enter directory or select file, `Backspace`/`h` go up, `/` filter, `.` toggle hidden files.
 
-### DashboardWindow
+### dashboardView
 
-Grid of independent cells, each with its own render lambda.
+Grid of independent cells, each rendering a child `Component`.
 
 ```kotlin
-DashboardWindow(
+val dashboard = context.dashboardView(
     columns = 2,
     cells = listOf(
-        DashboardCell("CPU", render = { cpuGauge() }),
-        DashboardCell("Memory", render = { memChart() }),
-        DashboardCell("Logs", render = { logList() }, onInput = { event -> false }),
-    ),
+        DashboardCell("CPU Gauge", render = { cpuGaugeComponent }),
+        DashboardCell("Logs", render = { logListComponent })
+    )
 )
 ```
 
-Keys: `Tab`/`Shift+Tab` cycle cell focus.
+Keys: `Tab`/`Shift+Tab` cycle active cell focus.
 
-### PaginatedListWindow\<T\>
+### paginatedListView
 
-Lazily loads pages of data via a suspend function.
+Lazily loads pages of data reactively via a suspend loader.
 
 ```kotlin
-val paginated = PaginatedListWindow<MyItem>(
+val paginated = context.paginatedListView(
     pageSize = 50,
     loadThreshold = 10,
-    loadPage = { page -> fetchPage(page) },
+    loadPage = { offset, limit -> fetchItems(offset, limit) }, // suspend function returning List<ListEntry<T>>
     renderItem = { item, focused -> if (focused) text(item.name).inverted() else text(item.name) },
-    toSearchString = { it.name },
+    renderHeader = { name -> hbox(text("  $name").bold(), filler()) }
 )
 ```
 
-A loading row appears at the bottom while the next page is fetching. Fuzzy search works over all loaded items. Call `paginated.setRequestFrame { app.requestAnimationFrame() }` if you need frame updates during loading.
+A loading row appears at the bottom while next page fetches. Fuzzy search `/` filters over all currently loaded items.
 
-### StepProgressWindow
+### stepProgressView
 
-Renders a pipeline with named steps, spinner ticks, and expandable output.
+Renders a pipeline pipeline of steps with status icons, spinners, and expandable output.
 
 ```kotlin
-// ViewModel drives the spinner and updates steps:
-val state = StepProgressState(
-    steps = listOf(
-        Step("Build",  StepStatus.Done, output = buildLog),
-        Step("Test",   StepStatus.Running, output = emptyList()),
-        Step("Deploy", StepStatus.Pending),
-    ),
-    spinnerTick = tick,
+val progress = context.stepProgressView(
+    getState = {
+        StepProgressState(
+            steps = listOf(
+                ProgressStep("Build", StepStatus.Done, output = buildLogs),
+                ProgressStep("Test", StepStatus.Running)
+            ),
+            spinnerTick = currentTick
+        )
+    }
 )
-stepProgressWindow.render(state)
 ```
 
-Keys: arrow keys navigate steps, `Space`/arrows expand step output.
+Keys: Arrow keys navigate steps, `Space`/`Enter` expand/collapse selected step outputs.
+
+---
+
+## Component Styling
+
+Each built-in view can be styled individually by passing a specific `*Style` config class. By default, styles fallback to the active theme's colors defined in `Theme.current`.
+
+```kotlin
+val customListStyle = ListStyle(
+    focusedItemForeground = Color.Black,
+    focusedItemBackground = Color.Yellow,
+    headerForeground = Color.Cyan
+)
+
+val listView = context.listView(
+    getEntries = { entries },
+    renderItem = { item, focused -> text(item) },
+    renderHeader = { text(it) },
+    style = customListStyle
+)
+```
+
+### Supported Styles
+* `ListStyle`: `focusedItemForeground`, `focusedItemBackground`, `headerForeground`, `scrollThumb`, `searchHighlight`
+* `TableStyle`: `headerForeground`, `focusedRowForeground`, `focusedRowBackground`, `sortIndicatorColor`, `scrollThumb`, `borderStyle`
+* `TreeStyle`: `focusedNodeForeground`, `focusedNodeBackground`, `expandedIcon`, `collapsedIcon`, `leafIndent`, `scrollThumb`
+* `SplitStyle`: `activeTitleForeground`, `inactiveTitleForeground`, `borderStyle`, `activeBorderStyle`
+* `DashboardStyle`: `focusedTitleForeground`, `unfocusedTitleForeground`, `borderStyle`, `focusedBorderStyle`
+* `PagerStyle`: `searchHighlight`, `lineNumberColor`, `scrollThumb`
+* `StepProgressStyle`: `pendingColor`, `runningColor`, `doneColor`, `failedColor`, `skippedColor`
+* `TabBarStyle`: `activeTabForeground`, `inactiveTabForeground`, `borderStyle`, `borderColor`
+* `FilePickerStyle`: `directoryColor`, `fileColor`, `pathColor`, `scrollThumb`
+* `TextEditorStyle`: `lineNumbersColor`, `cursorForeground`, `cursorBackground`, `scrollThumb`
+
+To configure global colors, subclass or instantiate `ThemeColors` and assign it:
+```kotlin
+Theme.current = ThemeColors(
+    accent = Color.Green,
+    border = Color.GrayDark
+)
+```
 
 ---
 
 ## Async loading
 
-`AsyncViewModel` and `AsyncScreen` handle loading / success / error without boilerplate.
+`AsyncViewModel` and `AsyncScreen` handle loading, success, and error states seamlessly:
 
 ```kotlin
 class MyViewModel : AsyncViewModel<MyData, MyEvent>() {
@@ -302,7 +369,7 @@ class MyViewModel : AsyncViewModel<MyData, MyEvent>() {
     }
 
     private fun load() = launchLoad {
-        delay(500)          // suspend: fetch from network, disk, etc.
+        delay(500) // suspend call
         fetchData()
     }
 }
@@ -310,12 +377,16 @@ class MyViewModel : AsyncViewModel<MyData, MyEvent>() {
 class MyScreen : AsyncScreen<MyData, MyEvent>() {
     override val viewModel = MyViewModel()
 
-    override fun buildLoaded(data: MyData): Component =
-        myWindow.render(data.toWindowState())
+    override fun ScreenContext.buildLoaded(data: MyData): Component =
+        listView(
+            getEntries = { data.items.map { ListEntry.Item(it) } },
+            renderItem = { name, focused -> text(name) },
+            renderHeader = { text(it) }
+        )
 }
 ```
 
-A spinner is shown automatically during loading; override `buildLoading` or `buildError` to customise.
+A loading spinner is shown automatically. Subclasses of `AsyncScreen` implement `ScreenContext.buildLoaded(data: T)` to define the loaded view, and can override `buildLoading` or `buildError` to customize those states.
 
 ---
 
@@ -372,7 +443,7 @@ Logger.warn("Config missing, using defaults")
 Logger.error("Connection refused")
 ```
 
-Logs are kept in a 1000-entry in-memory ring buffer and viewable via `Ctrl+L`.
+Logs are kept in a 1000-entry in-memory ring buffer, rendered inside a log panel overlay (`Ctrl+L`).
 
 ### Preferences
 
@@ -396,7 +467,7 @@ Preferences are saved automatically on app exit.
 
 ### UndoRedoStack\<T\>
 
-Generic undo/redo stack (used internally by `TextEditorWindow`).
+Generic undo/redo stack (used internally by `textEditorView`).
 
 ```kotlin
 val history = UndoRedoStack(initial = emptyList<String>(), maxSize = 100)
@@ -417,15 +488,6 @@ val component = responsive(
     wide   = { wideLayout() },
 )
 ```
-
-### Theme
-
-```kotlin
-Theme.current                   // active ThemeColors
-Theme.current.error             // Color for error text
-```
-
-Extend `ThemeColors` and assign `Theme.current` to provide a custom theme.
 
 ---
 
@@ -448,8 +510,6 @@ Extend `ThemeColors` and assign `Theme.current` to provide a custom theme.
 
 - `Preferences.init(appName)` must be called before `runApp()`.
 - `Ctrl+N` and `Ctrl+L` are reserved by the framework; do not register them on screens.
-- `enableCtrlZ = true` is required in `runApp()` to use undo/redo in `TextEditorWindow`.
-- Window volatile fields manage scroll/focus state in-place; they are not recomposed per frame.
-- `DashboardCell` uses a render lambda rather than a typed `Window<S>` to avoid type erasure across heterogeneous cells.
-- `PaginatedListWindow` creates its own `CoroutineScope`; no external scope is needed.
-- `TabApp` uses `Alt+H`/`L` for tab navigation — `Ctrl+Tab` is avoided because it is intercepted by most terminals.
+- `enableCtrlZ = true` is required in `runApp()` to use undo/redo in `textEditorView`.
+- Component focus is managed via native FTXUI focus APIs. Specify the active component that should receive input via the `activeWindow` property on the screen.
+- `TabApp` uses `Alt+H`/`L` for tab navigation — `Ctrl+Tab` is avoided because it is intercepted by most terminal emulators.

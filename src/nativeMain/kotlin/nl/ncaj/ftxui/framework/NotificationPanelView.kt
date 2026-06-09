@@ -1,8 +1,11 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import nl.ncaj.ftxui.*
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 

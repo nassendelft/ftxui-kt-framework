@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import nl.ncaj.ftxui.*
+import kotlin.time.Duration.Companion.milliseconds
 
 sealed class AsyncState<out T> {
     data class Loading(val tick: Int = 0) : AsyncState<Nothing>()
@@ -26,7 +27,7 @@ abstract class AsyncViewModel<T, E> : ViewModel<AsyncState<T>, E>() {
         scope.launch {
             val animJob = scope.launch {
                 var tick = 0
-                while (true) { delay(100); _state.value = AsyncState.Loading(++tick) }
+                while (true) { delay(100.milliseconds); _state.value = AsyncState.Loading(++tick) }
             }
             try {
                 val result = block()
@@ -40,11 +41,56 @@ abstract class AsyncViewModel<T, E> : ViewModel<AsyncState<T>, E>() {
     }
 }
 
-abstract class AsyncScreen<T, E> : Screen<AsyncState<T>, E>() {
-    final override fun buildContent(state: AsyncState<T>): Component = when (state) {
-        is AsyncState.Loading -> buildLoading(state.tick)
-        is AsyncState.Success -> buildLoaded(state.data)
-        is AsyncState.Error -> buildError(state.message, state.canRetry)
+abstract class AsyncScreen<T, E> : Screen() {
+    abstract val viewModel: AsyncViewModel<T, E>
+
+    final override fun buildContent(context: ScreenContext): Component {
+        val tabIndex = IntState(0)
+        val tabContainer = tab(tabIndex)
+
+        var tick by context.mutableStateOf(0)
+        val loadingComp = renderer {
+            buildLoading(tick).render()
+        }
+        tabContainer.add(loadingComp)
+
+        var errorMessage by context.mutableStateOf("")
+        var canRetry by context.mutableStateOf(false)
+        val errorComp = renderer {
+            buildError(errorMessage, canRetry).render()
+        }
+        tabContainer.add(errorComp)
+
+        var successCount = 0
+        var lastData: T? = null
+
+        GlobalScope.launch {
+            viewModel.state.collect { state ->
+                when (state) {
+                    is AsyncState.Loading -> {
+                        tick = state.tick
+                        tabIndex.value = 0
+                    }
+                    is AsyncState.Error -> {
+                        errorMessage = state.message
+                        canRetry = state.canRetry
+                        tabIndex.value = 1
+                    }
+                    is AsyncState.Success -> {
+                        if (state.data != lastData || successCount == 0) {
+                            lastData = state.data
+                            val loadedComp = with(context) { buildLoaded(state.data) }
+                            tabContainer.add(loadedComp)
+                            successCount++
+                        }
+                        tabIndex.value = 1 + successCount
+                    }
+                }
+                context.requestRedraw()
+            }
+        }
+
+        return tabContainer
     }
 
     protected open fun buildLoading(tick: Int): Component = renderer {
@@ -57,5 +103,5 @@ abstract class AsyncScreen<T, E> : Screen<AsyncState<T>, E>() {
         vbox(filler(), hbox(filler(), text("✗ $message$hint").color(Theme.current.error), filler()), filler())
     }
 
-    protected abstract fun buildLoaded(data: T): Component
+    protected abstract fun ScreenContext.buildLoaded(data: T): Component
 }

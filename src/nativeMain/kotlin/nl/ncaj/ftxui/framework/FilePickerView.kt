@@ -1,9 +1,11 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import kotlinx.cinterop.*
-import platform.posix.*
 import nl.ncaj.ftxui.*
+import platform.posix.closedir
+import platform.posix.getcwd
+import platform.posix.opendir
+import platform.posix.readdir
 
 data class FileEntry(
     val name: String,
@@ -22,122 +24,74 @@ data class FilePickerState(
 )
 
 @OptIn(ExperimentalForeignApi::class)
-open class FilePickerView(
+fun ScreenContext.filePickerView(
     initialPath: String = ".",
-    val onFileSelected: (String) -> Unit = {},
+    onFileSelected: (String) -> Unit = {},
     showHiddenInitially: Boolean = false,
-    val filter: ((FileEntry) -> Boolean)? = null,
-    val rowContent: ((entry: FileEntry, focused: Boolean) -> Element)? = null,
-    private val onStateChange: ((FilePickerState) -> Unit)? = null,
-    private val keybindings: FilePickerKeybindings = FilePickerKeybindings(),
-    private val style: FilePickerStyle = FilePickerStyle(),
-) : InputReceiver {
+    filter: ((FileEntry) -> Boolean)? = null,
+    rowContent: ((entry: FileEntry, focused: Boolean) -> Element)? = null,
+    keybindings: FilePickerKeybindings = FilePickerKeybindings(),
+    style: FilePickerStyle = FilePickerStyle()
+): Component {
+    var currentPath by mutableStateOf(resolvePath(initialPath))
+    var entries by mutableStateOf(emptyList<FileEntry>())
+    var selectedIndex by mutableStateOf(0)
+    var scrollOffset by mutableStateOf(0)
+    var showHidden by mutableStateOf(showHiddenInitially)
+    var filterQuery by mutableStateOf("")
+    var filtering by mutableStateOf(false)
 
-    @Volatile private var currentPath: String = resolvePath(initialPath)
-    @Volatile private var entries: List<FileEntry> = emptyList()
-    @Volatile private var selectedIndex: Int = 0
-    @Volatile private var scrollOffset: Int = 0
-    @Volatile private var showHidden: Boolean = showHiddenInitially
-    @Volatile private var filterQuery: String = ""
-    @Volatile private var filtering: Boolean = false
-
-    init {
-        loadEntries()
+    val loadEntries: () -> Unit = {
+        val raw = listDirectory(currentPath) ?: emptyList()
+        entries = raw
+            .filter { showHidden || !it.name.startsWith(".") }
+            .let { list -> filter?.let { f -> list.filter(f) } ?: list }
     }
 
-    private fun getVisibleHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
-    private fun contentHeight(): Int = getVisibleHeight()
-
-    fun render(state: FilePickerState): Component {
-        val oldPath = currentPath
-        val oldHidden = showHidden
-        if (onStateChange != null) {
-            currentPath = if (state.currentPath.isNotEmpty()) state.currentPath else resolvePath(state.initialPath)
-            selectedIndex = state.selectedIndex
-            scrollOffset = state.scrollOffset
-            showHidden = state.showHidden
-            filterQuery = state.filterQuery
-            filtering = state.filtering
+    val visibleEntries: () -> List<FileEntry> = {
+        if (filterQuery.isEmpty()) entries
+        else {
+            val q = filterQuery.lowercase()
+            entries.filter { it.name.lowercase().contains(q) }
         }
-        if (currentPath != oldPath || showHidden != oldHidden || entries.isEmpty()) {
-            loadEntries()
-        }
-        return renderer { buildElement() }
     }
 
-    override fun onInput(event: FtxUIEvent): Boolean {
-        val oldPath = currentPath
-        val oldIndex = selectedIndex
-        val oldScroll = scrollOffset
-        val oldHidden = showHidden
-        val oldFilterQuery = filterQuery
-        val oldFiltering = filtering
+    val getVisibleHeight: () -> Int = { Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT }
+    val pageSize: () -> Int = { maxOf(1, getVisibleHeight() - 4) }
 
-        val handled = if (filtering) handleFilterInput(event) else handleNormalInput(event)
+    val ensureScrollCoversSelection: () -> Unit = {
+        val listH = getVisibleHeight() - 2
+        val visible = visibleEntries()
+        if (selectedIndex < scrollOffset) scrollOffset = selectedIndex
+        if (selectedIndex >= scrollOffset + listH) scrollOffset = selectedIndex - listH + 1
+        scrollOffset = scrollOffset.coerceIn(0, maxOf(0, visible.size - listH))
+    }
 
-        if (handled) {
-            if (currentPath != oldPath || selectedIndex != oldIndex || scrollOffset != oldScroll || showHidden != oldHidden || filterQuery != oldFilterQuery || filtering != oldFiltering) {
-                notifyStateChange()
+    val moveUp: (Int) -> Unit = { count ->
+        selectedIndex = (selectedIndex - count).coerceAtLeast(0)
+        ensureScrollCoversSelection()
+    }
+
+    val moveDown: (Int) -> Unit = { count ->
+        selectedIndex = (selectedIndex + count).coerceAtMost(maxOf(0, visibleEntries().lastIndex))
+        ensureScrollCoversSelection()
+    }
+
+    val onEnter: () -> Unit = {
+        val entry = visibleEntries().getOrNull(selectedIndex)
+        if (entry != null) {
+            if (entry.isDirectory) {
+                currentPath = "$currentPath/${entry.name}".normalizePath()
+                loadEntries()
+                selectedIndex = 0
+                scrollOffset = 0
+            } else {
+                onFileSelected("$currentPath/${entry.name}")
             }
         }
-        return handled
     }
 
-    private fun notifyStateChange() {
-        val newState = FilePickerState(
-            initialPath = currentPath,
-            showHidden = showHidden,
-            currentPath = currentPath,
-            selectedIndex = selectedIndex,
-            scrollOffset = scrollOffset,
-            filterQuery = filterQuery,
-            filtering = filtering
-        )
-        onStateChange?.invoke(newState)
-    }
-
-    private fun handleNormalInput(event: FtxUIEvent): Boolean = when {
-        event.matches(keybindings.moveUpKeys, keybindings.moveUpChars)  -> { moveUp(1); true }
-        event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
-        event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(pageSize()); true }
-        event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(pageSize()); true }
-        event.matches(keybindings.homeKeys, keybindings.homeChars)  -> { selectedIndex = 0; ensureScrollCoversSelection(); true }
-        event.matches(keybindings.endKeys, keybindings.endChars)  -> { selectedIndex = visibleEntries().lastIndex; ensureScrollCoversSelection(); true }
-        event.matches(keybindings.selectKeys, keybindings.selectChars) -> { onEnter(); true }
-        event.matches(keybindings.goUpKeys, keybindings.goUpChars) -> { goUp(); true }
-        event.matches(keybindings.searchKeys, keybindings.searchChars) -> { filtering = true; filterQuery = ""; true }
-        event.matches(keybindings.toggleHiddenKeys, keybindings.toggleHiddenChars) -> { showHidden = !showHidden; loadEntries(); true }
-        else -> false
-    }
-
-    private fun handleFilterInput(event: FtxUIEvent): Boolean {
-        when {
-            event.isKey(Key.Escape) -> { filtering = false; filterQuery = "" }
-            event.isKey(Key.Return) -> { filtering = false }
-            event.isKey(Key.Backspace) -> {
-                if (filterQuery.isNotEmpty()) filterQuery = filterQuery.dropLast(1)
-                else filtering = false
-            }
-            event is FtxUIEvent.Character -> filterQuery += event.character
-        }
-        selectedIndex = 0
-        scrollOffset = 0
-        return true
-    }
-
-    private fun onEnter() {
-        val entry = visibleEntries().getOrNull(selectedIndex) ?: return
-        if (entry.isDirectory) {
-            currentPath = "$currentPath/${entry.name}".normalizePath()
-            loadEntries()
-            selectedIndex = 0
-            scrollOffset = 0
-        } else {
-            onFileSelected("$currentPath/${entry.name}")
-        }
-    }
-
-    private fun goUp() {
+    val goUp: () -> Unit = {
         val parent = currentPath.substringBeforeLast('/', "")
         if (parent.isNotEmpty()) {
             val prevDir = currentPath.substringAfterLast('/')
@@ -148,27 +102,31 @@ open class FilePickerView(
         }
     }
 
-    private fun loadEntries() {
-        val raw = listDirectory(currentPath) ?: emptyList()
-        entries = raw
-            .filter { showHidden || !it.name.startsWith(".") }
-            .let { list -> filter?.let { f -> list.filter(f) } ?: list }
+    // Initial load
+    loadEntries()
+
+    val buildEntryRow: (FileEntry, Boolean) -> Element = { entry, focused ->
+        if (rowContent != null) rowContent(entry, focused)
+        else {
+            val icon = if (entry.isDirectory) "[d]" else "   "
+            val size = if (entry.isDirectory) "" else formatSize(entry.sizeBytes).padStart(8)
+            val entryColor = if (entry.isDirectory)
+                style.directoryColor.or(Theme.current.directoryColor)
+            else
+                style.fileColor.or(Theme.current.fileColor)
+            val row = hbox(
+                text("  $icon ").color(entryColor),
+                text(entry.name).flex(),
+                text("  $size  ").dim(),
+            )
+            if (focused) row.inverted() else row
+        }
     }
 
-    private fun visibleEntries(): List<FileEntry> {
-        if (filterQuery.isEmpty()) return entries
-        val q = filterQuery.lowercase()
-        return entries.filter { it.name.lowercase().contains(q) }
-    }
-
-    // -----------------------------------------------------------------------
-    // Rendering
-    // -----------------------------------------------------------------------
-
-    private fun buildElement(): Element {
+    val base = focusableRenderer { focused ->
         val visible = visibleEntries()
-        val visH = contentHeight()
-        val headerLines = 2  // path header + separator
+        val visH = getVisibleHeight()
+        val headerLines = 2
         val footerLines = if (filtering) 2 else 0
         val listH = maxOf(1, visH - headerLines - footerLines)
 
@@ -182,8 +140,8 @@ open class FilePickerView(
         } else {
             slice.mapIndexed { i, entry ->
                 val absIdx = start + i
-                val focused = absIdx == selectedIndex
-                buildEntryRow(entry, focused)
+                val isFocused = absIdx == selectedIndex
+                buildEntryRow(entry, isFocused && focused)
             }
         }
 
@@ -201,61 +159,50 @@ open class FilePickerView(
 
         val main = vbox(pathEl, separator(), listRow)
 
-        val content = if (filtering) {
+        if (filtering) {
             val queryEl = hbox(text("/ $filterQuery█"))
             vbox(main, separator(), queryEl)
         } else {
             main
         }
-        return content
     }
 
-    private fun buildEntryRow(entry: FileEntry, focused: Boolean): Element {
-        if (rowContent != null) return rowContent(entry, focused)
-        val icon = if (entry.isDirectory) "[d]" else "   "
-        val size = if (entry.isDirectory) "" else formatSize(entry.sizeBytes).padStart(8)
-        val entryColor = if (entry.isDirectory)
-            style.directoryColor.or(Theme.current.directoryColor)
-        else
-            style.fileColor.or(Theme.current.fileColor)
-        val row = hbox(
-            text("  $icon ").color(entryColor),
-            text(entry.name).flex(),
-            text("  $size  ").dim(),
-        )
-        return if (focused) row.inverted() else row
+    return base.catchEvent { event ->
+        if (filtering) {
+            when {
+                event.isKey(Key.Escape) -> { filtering = false; filterQuery = "" }
+                event.isKey(Key.Return) -> { filtering = false }
+                event.isKey(Key.Backspace) -> {
+                    if (filterQuery.isNotEmpty()) filterQuery = filterQuery.dropLast(1)
+                    else filtering = false
+                }
+                event is FtxUIEvent.Character -> filterQuery += event.character
+            }
+            selectedIndex = 0
+            scrollOffset = 0
+            true
+        } else {
+            when {
+                event.matches(keybindings.moveUpKeys, keybindings.moveUpChars)  -> { moveUp(1); true }
+                event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
+                event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(pageSize()); true }
+                event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(pageSize()); true }
+                event.matches(keybindings.homeKeys, keybindings.homeChars)  -> { selectedIndex = 0; ensureScrollCoversSelection(); true }
+                event.matches(keybindings.endKeys, keybindings.endChars)  -> { selectedIndex = visibleEntries().lastIndex; ensureScrollCoversSelection(); true }
+                event.matches(keybindings.selectKeys, keybindings.selectChars) -> { onEnter(); true }
+                event.matches(keybindings.goUpKeys, keybindings.goUpChars) -> { goUp(); true }
+                event.matches(keybindings.searchKeys, keybindings.searchChars) -> { filtering = true; filterQuery = ""; true }
+                event.matches(keybindings.toggleHiddenKeys, keybindings.toggleHiddenChars) -> { showHidden = !showHidden; loadEntries(); true }
+                else -> false
+            }
+        }
     }
-
-    // -----------------------------------------------------------------------
-    // Navigation helpers
-    // -----------------------------------------------------------------------
-
-    private fun moveUp(count: Int) {
-        selectedIndex = (selectedIndex - count).coerceAtLeast(0)
-        ensureScrollCoversSelection()
-    }
-
-    private fun moveDown(count: Int) {
-        selectedIndex = (selectedIndex + count).coerceAtMost(maxOf(0, visibleEntries().lastIndex))
-        ensureScrollCoversSelection()
-    }
-
-    private fun ensureScrollCoversSelection() {
-        val listH = contentHeight() - 2
-        if (selectedIndex < scrollOffset) scrollOffset = selectedIndex
-        if (selectedIndex >= scrollOffset + listH) scrollOffset = selectedIndex - listH + 1
-        scrollOffset = scrollOffset.coerceIn(0, maxOf(0, visibleEntries().size - listH))
-    }
-
-    private fun pageSize(): Int = maxOf(1, getVisibleHeight() - 4)
 }
 
 // -----------------------------------------------------------------------
 // POSIX helpers
 // -----------------------------------------------------------------------
 
-// `mode_t` and `stat.st_mode` resolve to integer types of different bit widths on macOS vs Linux,
-// so the stat lookup is implemented per-target and exposed here through a width-safe type.
 internal class PathInfo(val isDirectory: Boolean, val sizeBytes: Long)
 internal expect fun statPath(path: String): PathInfo?
 

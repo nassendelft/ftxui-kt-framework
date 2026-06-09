@@ -1,14 +1,16 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
-import kotlinx.coroutines.*
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import nl.ncaj.ftxui.*
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
 fun runApp(
-    initialScreen: Screen<*, *>,
+    initialScreen: Screen,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
 ) {
@@ -23,27 +25,30 @@ internal class AppRunner(
     confirmOnQuit: Boolean = false,
 ) : BaseAppRunner(app, confirmOnQuit), Navigator {
 
-    private class ScreenEntry(val screen: Screen<*, *>, @Volatile var component: Component)
+    private class ScreenEntry(val screen: Screen, val component: Component, val tabIndex: Int)
     private class ToastData(val toast: Toast, @Volatile var progress: Float = 0f)
 
     private val stack = ArrayDeque<ScreenEntry>()
-    private var activeCollectionJob: Job? = null
+    private val tabSelector = IntState(0)
+    private val tabContainer = tab(tabSelector)
+    private var totalComponentsAdded = 0
 
     @Volatile private var activeDialog: Dialog? = null
     @Volatile private var promptInput: String = ""
     @Volatile private var activeToasts: List<ToastData> = emptyList()
     @Volatile private var notificationLog: List<NotificationRecord> = emptyList()
 
-    override val currentScreen: Screen<*, *>? get() = stack.lastOrNull()?.screen
+    override val currentScreen: Screen? get() = stack.lastOrNull()?.screen
+    override fun getScreenContainer(): Component = tabContainer
 
-    override fun activeScreen(): Screen<*, *>? = currentScreen
+    override fun activeScreen(): Screen? = currentScreen
     override fun activeStackSize(): Int = stack.size
     override fun activeNotificationLog(): List<NotificationRecord> = notificationLog
     override fun isDialogActive(): Boolean = activeDialog != null
     override fun extraPerfLines(): List<String> = listOf("Stack: ${stack.size}")
 
     override fun buildContentElement(): Element =
-        stack.lastOrNull()?.component?.render() ?: emptyElement()
+        tabContainer.render()
 
     override fun buildActiveToastsElement(): Element? {
         val toasts = activeToasts
@@ -73,19 +78,30 @@ internal class AppRunner(
     override fun handleScreenInput(event: FtxUIEvent): Boolean =
         currentScreen?.handleInput(event, this) ?: false
 
-    override fun push(screen: Screen<*, *>) {
-        @Suppress("UNCHECKED_CAST")
-        val typed = screen as Screen<Any?, Any?>
-        val component = typed.render(typed.viewModel.state.value)
-        stack.addLast(ScreenEntry(screen, component))
-        startStateCollection(screen)
+    override fun push(screen: Screen) {
+        val context = object : ScreenContext {
+            override val navigator: Navigator get() = this@AppRunner
+            override fun requestRedraw() {
+                app.requestAnimationFrame()
+            }
+        }
+        val component = screen.build(context)
+        tabContainer.add(component)
+        val index = totalComponentsAdded++
+        stack.addLast(ScreenEntry(screen, component, index))
+        tabSelector.value = index
+        app.requestAnimationFrame()
     }
 
     override fun pop() {
-        activeCollectionJob?.cancel()
         if (stack.isEmpty()) return
         stack.removeLast()
-        if (stack.isEmpty()) app.exit() else startStateCollection(currentScreen!!)
+        if (stack.isEmpty()) {
+            app.exit()
+        } else {
+            tabSelector.value = stack.last().tabIndex
+            app.requestAnimationFrame()
+        }
     }
 
     override fun showDialog(dialog: Dialog) {
@@ -121,25 +137,12 @@ internal class AppRunner(
         }
     }
 
-    fun start(initialScreen: Screen<*, *>) {
+    fun start(initialScreen: Screen) {
         if (confirmOnQuit) app.forceHandleCtrlC(false)
         push(initialScreen)
         val root = createRootComponent()
         app.loop(root)
         Preferences.save()
         scope.cancel()
-    }
-
-    private fun startStateCollection(screen: Screen<*, *>) {
-        activeCollectionJob?.cancel()
-        @Suppress("UNCHECKED_CAST")
-        val typed = screen as Screen<Any?, Any?>
-        activeCollectionJob = scope.launch {
-            typed.viewModel.state.collect { state ->
-                val top = stack.lastOrNull()
-                if (top?.screen === typed) top.component = typed.render(state)
-                app.requestAnimationFrame()
-            }
-        }
     }
 }

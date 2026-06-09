@@ -1,291 +1,69 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import nl.ncaj.ftxui.*
-
-// ---------------------------------------------------------------------------
-// Entry model
-// ---------------------------------------------------------------------------
 
 sealed class ListEntry<out T> {
     class Header<out T>(val data: T) : ListEntry<T>()
     class Item<out T>(val data: T, val onEnter: (() -> Unit)? = null) : ListEntry<T>()
 }
 
-// ---------------------------------------------------------------------------
-// State model
-// ---------------------------------------------------------------------------
-
-data class ListState<T>(
-    val entries: List<ListEntry<T>>,
-    val focusedIndex: Int = -1,
-    val scrollOffset: Int = 0,
-    val searchActive: Boolean = false,
-    val searchQuery: String = ""
-)
-
-// ---------------------------------------------------------------------------
-// SearchWindow — sub-view that owns all search interaction
-// ---------------------------------------------------------------------------
-
-internal class SearchWindow<T>(
-    private val getEntries: () -> List<ListEntry<T>>,
-    private val toSearchString: (T) -> String,
-    private val onResultSelected: (entryIndex: Int) -> Unit,
-    private val onConfirm: (entryIndex: Int) -> Unit,
-    private val onDismiss: () -> Unit,
-) : InputReceiver {
-
-    @Volatile var query: String = ""
-        private set
-    @Volatile private var resultIndices: List<Int> = emptyList()
-    @Volatile private var cursor: Int = 0
-
-    fun render(): Component = renderer { hbox(text("/ $query█")) }
-
-    override fun onInput(event: FtxUIEvent): Boolean {
-        when {
-            event.isKey(Key.Escape) -> onDismiss()
-            event.isKey(Key.Return) -> onConfirm(resultIndices.getOrElse(cursor) { -1 })
-            event.isKey(Key.ArrowUp) -> {
-                cursor = (cursor - 1).coerceAtLeast(0)
-                resultIndices.getOrNull(cursor)?.let { onResultSelected(it) }
-            }
-            event.isKey(Key.ArrowDown) -> {
-                cursor = (cursor + 1).coerceAtMost(maxOf(0, resultIndices.lastIndex))
-                resultIndices.getOrNull(cursor)?.let { onResultSelected(it) }
-            }
-            event.isKey(Key.Backspace) -> {
-                if (query.isNotEmpty()) {
-                    query = query.dropLast(1)
-                    applyQuery()
-                } else {
-                    onDismiss()
-                }
-            }
-            event is FtxUIEvent.Character -> {
-                query += event.character
-                applyQuery()
-            }
-        }
-        return true  // consume everything in search mode
-    }
-
-    private fun applyQuery() {
-        resultIndices = computeResults(query)
-        cursor = 0
-        resultIndices.getOrNull(0)?.let { onResultSelected(it) }
-    }
-
-    private fun computeResults(query: String): List<Int> {
-        if (query.isEmpty()) return emptyList()
-        val entries = getEntries()
-        return entries.indices.filter { i ->
-            val e = entries[i]
-            e is ListEntry.Item<*> && fuzzyMatch(query, toSearchString(@Suppress("UNCHECKED_CAST") (e as ListEntry.Item<T>).data))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BaseListWindow — shared navigation, scroll, and search for list windows
-// ---------------------------------------------------------------------------
-
-abstract class BaseListWindow<T>(
-    private val jumpSize: Int,
-    private val toSearchString: (T) -> String,
-    protected val keybindings: ListKeybindings = ListKeybindings(),
-) {
-    @Volatile protected var focusedIndex: Int = -1
-    @Volatile protected var scrollOffset: Int = 0
-    @Volatile protected var lastListH: Int = 20
-    @Volatile protected var searchWindow: InputReceiver? = null
-    @Volatile private var searchWindowComponent: Component? = null
-
-    protected abstract fun displayItems(): List<ListEntry<T>>
-    protected abstract fun onItemActivated(item: ListEntry.Item<T>)
-
-    protected fun buildSearchBar(): Component? = searchWindowComponent
-
-    protected fun handleListInput(event: FtxUIEvent): Boolean {
-        val sw = searchWindow
-        if (sw != null) return sw.onInput(event)
-        return when {
-            event.matches(keybindings.moveUpKeys, keybindings.moveUpChars) -> { moveUp(1); true }
-            event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
-            event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(jumpSize); true }
-            event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(jumpSize); true }
-            event.matches(keybindings.homeKeys, keybindings.homeChars) -> { focusFirst(); true }
-            event.matches(keybindings.endKeys, keybindings.endChars) -> { focusLast(); true }
-            event.matches(keybindings.selectKeys, keybindings.selectChars) -> {
-                val entry = displayItems().getOrNull(focusedIndex)
-                if (entry is ListEntry.Item) {
-                    @Suppress("UNCHECKED_CAST")
-                    onItemActivated(entry)
-                    true
-                } else false
-            }
-            event.matches(keybindings.searchKeys, keybindings.searchChars) -> { activateSearch(); true }
-            else -> false
-        }
-    }
-
-    private fun activateSearch() {
-        val sw = SearchWindow(
-            getEntries = { displayItems() },
-            toSearchString = toSearchString,
-            onResultSelected = { idx ->
-                if (idx >= 0) { focusedIndex = idx; ensureScrollCoversSelection() }
-            },
-            onConfirm = { idx ->
-                if (idx >= 0) {
-                    @Suppress("UNCHECKED_CAST")
-                    (displayItems().getOrNull(idx) as? ListEntry.Item<T>)?.let { onItemActivated(it) }
-                }
-                deactivateSearch()
-            },
-            onDismiss = { deactivateSearch() },
-        )
-        searchWindow = sw
-        searchWindowComponent = sw.render()
-    }
-
-    protected open fun deactivateSearch() {
-        searchWindow = null
-        searchWindowComponent = null
-    }
-
-    private fun moveUp(count: Int) {
-        val all = displayItems()
-        var remaining = count
-        var i = focusedIndex - 1
-        while (i >= 0 && remaining > 0) {
-            if (all[i] is ListEntry.Item) { focusedIndex = i; remaining-- }
-            i--
-        }
-        ensureScrollCoversSelection()
-    }
-
-    protected open fun moveDown(count: Int) {
-        val all = displayItems()
-        var remaining = count
-        var i = focusedIndex + 1
-        while (i < all.size && remaining > 0) {
-            if (all[i] is ListEntry.Item) { focusedIndex = i; remaining-- }
-            i++
-        }
-        ensureScrollCoversSelection()
-    }
-
-    private fun focusFirst() {
-        focusedIndex = displayItems().indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
-        ensureScrollCoversSelection()
-    }
-
-    private fun focusLast() {
-        focusedIndex = displayItems().indexOfLast { it is ListEntry.Item }.let { if (it < 0) -1 else it }
-        ensureScrollCoversSelection()
-    }
-
-    protected fun ensureScrollCoversSelection() {
-        val visH = lastListH
-        val fi = focusedIndex
-        if (fi < 0) return
-        if (fi < scrollOffset) scrollOffset = fi
-        if (fi >= scrollOffset + visH) scrollOffset = fi - visH + 1
-        scrollOffset = scrollOffset.coerceIn(0, maxOf(0, displayItems().size - visH))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ListView
-// ---------------------------------------------------------------------------
-
-open class ListView<T>(
-    private val renderItem: (data: T, focused: Boolean) -> Element,
-    private val renderHeader: (data: T) -> Element,
+fun <T> ScreenContext.listView(
+    getEntries: () -> List<ListEntry<T>>,
+    renderItem: (data: T, focused: Boolean) -> Element,
+    renderHeader: (data: T) -> Element,
     toSearchString: (T) -> String = { it.toString() },
-    pageSize: Int = 10,
-    private val onStateChange: ((ListState<T>) -> Unit)? = null,
-    private val onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
-    keybindings: ListKeybindings = ListKeybindings(),
-    private val style: ListStyle = ListStyle(),
-) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
+    style: ListStyle = ListStyle(),
+    onFocusChange: ((Int) -> Unit)? = null,
+): Component {
+    var focusedIndex by MutableState(-1) { value ->
+        onFocusChange?.invoke(value)
+        requestRedraw()
+    }
+    var scrollOffset by mutableStateOf(0)
+    var searchQuery by mutableStateOf("")
+    var searchActive by mutableStateOf(false)
+    var searchCursor by mutableStateOf(0)
+    var lastListH by mutableStateOf(20)
 
-    @Volatile private var state: ListState<T> = ListState(emptyList())
-
-    override fun displayItems(): List<ListEntry<T>> = state.entries
-
-    override fun onItemActivated(item: ListEntry.Item<T>) = item.onEnter?.invoke() ?: Unit
-
-    // Call this whenever the Screen's state observer receives a new emission.
-    fun updateState(newState: ListState<T>) {
-        state = newState
-        if (onStateChange != null) {
-            focusedIndex = newState.focusedIndex
-            scrollOffset = newState.scrollOffset
+    val getFilteredIndices: () -> List<Int> = {
+        val q = searchQuery.lowercase()
+        val entries = getEntries()
+        if (q.isEmpty()) emptyList()
+        else entries.indices.filter { i ->
+            val e = entries[i]
+            @Suppress("UNCHECKED_CAST")
+            e is ListEntry.Item<*> && toSearchString(e.data as T).lowercase().contains(q)
         }
-        ensureValidFocus()
-        ensureScrollCoversSelection()
     }
 
-    fun render(state: ListState<T>): Component {
-        this.state = state
-        if (onStateChange != null) {
-            this.focusedIndex = state.focusedIndex
-            this.scrollOffset = state.scrollOffset
-        }
-        val prevFocus = focusedIndex
-        ensureValidFocus()
-        if (onStateChange != null && focusedIndex != prevFocus) {
-            notifyStateChange()
-        }
-        return renderer { buildElement() }
-    }
-
-    override fun onInput(event: FtxUIEvent): Boolean {
-        val oldFocus = focusedIndex
-        val oldScroll = scrollOffset
-        val oldSearchActive = searchWindow != null
-        val oldSearchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
-
-        val handled = handleListInput(event)
-
-        if (handled) {
-            val newSearchActive = searchWindow != null
-            val newSearchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
-            if (focusedIndex != oldFocus || scrollOffset != oldScroll || newSearchActive != oldSearchActive || newSearchQuery != oldSearchQuery) {
-                notifyStateChange()
+    val ensureValidFocus: () -> Unit = {
+        val entries = getEntries()
+        if (entries.isNotEmpty()) {
+            if (focusedIndex < 0 || focusedIndex >= entries.size || entries[focusedIndex] is ListEntry.Header<*>) {
+                focusedIndex = entries.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
             }
         }
-        return handled
     }
 
-    private fun notifyStateChange() {
-        val newState = ListState(
-            entries = state.entries,
-            focusedIndex = focusedIndex,
-            scrollOffset = scrollOffset,
-            searchActive = searchWindow != null,
-            searchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
-        )
-        onStateChange?.invoke(newState)
-
-        val item = state.entries.getOrNull(focusedIndex)
-        if (item is ListEntry.Item) {
-            onSelectionChanged?.invoke(item.data)
-        } else {
-            onSelectionChanged?.invoke(null)
+    val ensureScrollCoversSelection: () -> Unit = {
+        val visH = lastListH
+        val entries = getEntries()
+        if (focusedIndex >= 0 && entries.isNotEmpty()) {
+            if (focusedIndex < scrollOffset) scrollOffset = focusedIndex
+            if (focusedIndex >= scrollOffset + visH) scrollOffset = focusedIndex - visH + 1
+            scrollOffset = scrollOffset.coerceIn(0, maxOf(0, entries.size - visH))
         }
     }
 
-    private fun buildElement(): Element {
-        val entries = state.entries
-        if (entries.isEmpty()) return emptyElement()
+    val base = focusableRenderer { focused ->
+        val entries = getEntries()
+        ensureValidFocus()
+        ensureScrollCoversSelection()
 
-        val swComp = buildSearchBar()
+        if (entries.isEmpty()) return@focusableRenderer emptyElement()
+
         val totalH = Terminal.size().dimy
-        val listH = if (swComp != null) maxOf(1, totalH - 2) else totalH
+        val listH = if (searchActive) maxOf(1, totalH - 2) else totalH
         lastListH = listH
 
         val start = scrollOffset.coerceIn(0, entries.size)
@@ -298,9 +76,9 @@ open class ListView<T>(
                     style.headerForeground?.let { el.color(it) } ?: el
                 }
                 is ListEntry.Item -> {
-                    val focused = absoluteIndex == focusedIndex
-                    val el = renderItem(entry.data, focused)
-                    if (focused) {
+                    val isFocused = absoluteIndex == focusedIndex
+                    val el = renderItem(entry.data, isFocused)
+                    if (focused && isFocused) {
                         val fg = style.focusedItemForeground
                         val bg = style.focusedItemBackground
                         when {
@@ -316,32 +94,104 @@ open class ListView<T>(
 
         val listRow = hbox(
             vbox(*items.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, entries.size, listH, style.scrollThumb.or(Theme.current.scrollThumb)),
+            vScrollBar(scrollOffset, entries.size, listH, style.scrollThumb ?: Theme.current.scrollThumb),
         )
 
-        return if (swComp != null) {
-            vbox(swComp.render(), separator(), listRow)
+        if (searchActive) {
+            vbox(
+                hbox(text("/ $searchQuery█").color(Theme.current.accent)),
+                separator(),
+                listRow
+            )
         } else {
             listRow
         }
     }
 
-    private fun ensureValidFocus() {
-        val entries = state.entries
-        if (focusedIndex < 0 || focusedIndex >= entries.size || entries[focusedIndex] is ListEntry.Header<*>) {
-            focusedIndex = entries.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
+    return base.catchEvent { event ->
+        val entries = getEntries()
+        val filtered = getFilteredIndices()
+
+        if (searchActive) {
+            when {
+                event.isKey(Key.Escape) -> {
+                    searchActive = false
+                    searchQuery = ""
+                    true
+                }
+                event.isKey(Key.Return) -> {
+                    searchActive = false
+                    val activeIdx = filtered.getOrNull(searchCursor) ?: -1
+                    if (activeIdx >= 0) {
+                        focusedIndex = activeIdx
+                        (entries.getOrNull(focusedIndex) as? ListEntry.Item<T>)?.onEnter?.invoke()
+                    }
+                    true
+                }
+                event.isKey(Key.ArrowUp) -> {
+                    if (filtered.isNotEmpty()) {
+                        searchCursor = (searchCursor - 1).coerceAtLeast(0)
+                        focusedIndex = filtered[searchCursor]
+                    }
+                    true
+                }
+                event.isKey(Key.ArrowDown) -> {
+                    if (filtered.isNotEmpty()) {
+                        searchCursor = (searchCursor + 1).coerceAtMost(filtered.lastIndex)
+                        focusedIndex = filtered[searchCursor]
+                    }
+                    true
+                }
+                event.isKey(Key.Backspace) -> {
+                    if (searchQuery.isNotEmpty()) {
+                        searchQuery = searchQuery.dropLast(1)
+                        val newFiltered = getFilteredIndices()
+                        searchCursor = 0
+                        newFiltered.firstOrNull()?.let { focusedIndex = it }
+                    } else {
+                        searchActive = false
+                    }
+                    true
+                }
+                event is FtxUIEvent.Character -> {
+                    searchQuery += event.character
+                    val newFiltered = getFilteredIndices()
+                    searchCursor = 0
+                    newFiltered.firstOrNull()?.let { focusedIndex = it }
+                    true
+                }
+                else -> false
+            }
+        } else {
+            when {
+                event.isKey(Key.ArrowUp) || event.isKey("k") -> {
+                    var i = focusedIndex - 1
+                    while (i >= 0) {
+                        if (entries[i] is ListEntry.Item) { focusedIndex = i; break }
+                        i--
+                    }
+                    true
+                }
+                event.isKey(Key.ArrowDown) || event.isKey("j") -> {
+                    var i = focusedIndex + 1
+                    while (i < entries.size) {
+                        if (entries[i] is ListEntry.Item) { focusedIndex = i; break }
+                        i++
+                    }
+                    true
+                }
+                event.isKey(Key.Return) -> {
+                    (entries.getOrNull(focusedIndex) as? ListEntry.Item<T>)?.onEnter?.invoke()
+                    true
+                }
+                event.isKey("/") -> {
+                    searchActive = true
+                    searchQuery = ""
+                    searchCursor = 0
+                    true
+                }
+                else -> false
+            }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Fuzzy match — subsequence, case-insensitive
-// ---------------------------------------------------------------------------
-
-private fun fuzzyMatch(query: String, target: String): Boolean {
-    val q = query.lowercase()
-    val t = target.lowercase()
-    var qi = 0
-    for (c in t) { if (qi < q.length && c == q[qi]) qi++ }
-    return qi == q.length
 }

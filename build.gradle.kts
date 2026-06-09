@@ -6,7 +6,6 @@ plugins {
 group = "nl.ncaj.ftxui"
 
 repositories {
-    mavenLocal()
     mavenCentral()
 }
 

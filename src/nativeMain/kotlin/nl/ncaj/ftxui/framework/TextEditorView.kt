@@ -1,7 +1,7 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import nl.ncaj.ftxui.*
+import kotlin.reflect.KMutableProperty0
 
 data class TextEditorState(
     val content: String = "",
@@ -11,50 +11,231 @@ data class TextEditorState(
     val scrollOffset: Int = 0
 )
 
-open class TextEditorView(
-    private val showLineNumbers: Boolean = true,
-    val onContentChange: ((String) -> Unit)? = null,
-    private val onStateChange: ((TextEditorState) -> Unit)? = null,
-    private val keybindings: TextEditorKeybindings = TextEditorKeybindings(),
-    private val style: TextEditorStyle = TextEditorStyle(),
-) : InputReceiver {
+fun ScreenContext.textEditorView(
+    content: KMutableProperty0<String>,
+    showLineNumbers: Boolean = true,
+    onContentChange: ((String) -> Unit)? = null,
+    onStateChange: ((TextEditorState) -> Unit)? = null,
+    keybindings: TextEditorKeybindings = TextEditorKeybindings(),
+    style: TextEditorStyle = TextEditorStyle()
+): Component {
+    var lines = content.get().split("\n").toMutableList().ifEmpty { mutableListOf("") }
+    var cursorLine by mutableStateOf(0)
+    var cursorCol by mutableStateOf(0)
+    var scrollOffset by mutableStateOf(0)
+    var suppressHistoryPush = false
 
-    @Volatile private var lines: MutableList<String> = mutableListOf("")
-    @Volatile private var cursorLine: Int = 0
-    @Volatile private var cursorCol: Int = 0
-    @Volatile private var scrollOffset: Int = 0
-    @Volatile private var suppressHistoryPush: Boolean = false
+    val history = UndoRedoStack<List<String>>(content.get().split("\n"))
 
-    private val history = UndoRedoStack<List<String>>(listOf(""))
+    val getText: () -> String = { lines.joinToString("\n") }
 
-    val canUndo: Boolean get() = history.canUndo
-    val canRedo: Boolean get() = history.canRedo
+    val notifyStateChange: () -> Unit = {
+        onStateChange?.invoke(TextEditorState(
+            content = getText(),
+            showLineNumbers = showLineNumbers,
+            cursorLine = cursorLine,
+            cursorCol = cursorCol,
+            scrollOffset = scrollOffset
+        ))
+    }
 
-    fun getText(): String = lines.joinToString("\n")
+    val syncToProperty: () -> Unit = {
+        val txt = getText()
+        if (content.get() != txt) {
+            content.set(txt)
+            onContentChange?.invoke(txt)
+        }
+    }
 
-    fun setText(text: String) {
-        lines = text.split("\n").toMutableList().ifEmpty { mutableListOf("") }
-        cursorLine = 0
+    val pushHistory: () -> Unit = {
+        if (!suppressHistoryPush) history.push(lines.toList())
+    }
+
+    val contentHeight: () -> Int = { Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT }
+    val pageSize: () -> Int = { maxOf(1, contentHeight() - 2) }
+    val currentLine: () -> String = { lines.getOrElse(cursorLine) { "" } }
+
+    val ensureScrollCoversSelection: () -> Unit = {
+        val visH = contentHeight()
+        if (cursorLine < scrollOffset) scrollOffset = cursorLine
+        if (cursorLine >= scrollOffset + visH) scrollOffset = cursorLine - visH + 1
+        scrollOffset = scrollOffset.coerceIn(0, maxOf(0, lines.size - visH))
+    }
+
+    val moveCursorUp: (Int) -> Unit = { count ->
+        cursorLine = (cursorLine - count).coerceAtLeast(0)
+        cursorCol = cursorCol.coerceAtMost(currentLine().length)
+        ensureScrollCoversSelection()
+    }
+
+    val moveCursorDown: (Int) -> Unit = { count ->
+        cursorLine = (cursorLine + count).coerceAtMost(lines.lastIndex)
+        cursorCol = cursorCol.coerceAtMost(currentLine().length)
+        ensureScrollCoversSelection()
+    }
+
+    val moveCursorLeft: () -> Unit = {
+        if (cursorCol > 0) {
+            cursorCol--
+        } else if (cursorLine > 0) {
+            cursorLine--
+            cursorCol = currentLine().length
+            ensureScrollCoversSelection()
+        }
+    }
+
+    val moveCursorRight: () -> Unit = {
+        if (cursorCol < currentLine().length) {
+            cursorCol++
+        } else if (cursorLine < lines.lastIndex) {
+            cursorLine++
+            cursorCol = 0
+            ensureScrollCoversSelection()
+        }
+    }
+
+    val insertChar: (String) -> Unit = { char ->
+        val col = cursorCol.coerceIn(0, currentLine().length)
+        val line = currentLine()
+        lines[cursorLine] = line.substring(0, col) + char + line.substring(col)
+        cursorCol = col + char.length
+        pushHistory()
+        syncToProperty()
+    }
+
+    val insertNewline: () -> Unit = {
+        val col = cursorCol.coerceIn(0, currentLine().length)
+        val line = currentLine()
+        lines[cursorLine] = line.substring(0, col)
+        lines.add(cursorLine + 1, line.substring(col))
+        cursorLine++
         cursorCol = 0
-        scrollOffset = 0
-        history.reset(lines.toList())
+        ensureScrollCoversSelection()
+        pushHistory()
+        syncToProperty()
     }
 
-    private fun contentHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
-
-    fun render(state: TextEditorState): Component {
-        if (lines.size == 1 && lines[0].isEmpty() && state.content.isNotEmpty()) {
-            setText(state.content)
+    val backspace: () -> Unit = {
+        val col = cursorCol.coerceIn(0, currentLine().length)
+        if (col > 0) {
+            val line = currentLine()
+            lines[cursorLine] = line.substring(0, col - 1) + line.substring(col)
+            cursorCol = col - 1
+        } else if (cursorLine > 0) {
+            val prevLen = lines[cursorLine - 1].length
+            lines[cursorLine - 1] = lines[cursorLine - 1] + currentLine()
+            lines.removeAt(cursorLine)
+            cursorLine--
+            cursorCol = prevLen
+            ensureScrollCoversSelection()
         }
-        if (onStateChange != null) {
-            cursorLine = state.cursorLine
-            cursorCol = state.cursorCol
-            scrollOffset = state.scrollOffset
-        }
-        return renderer { buildElement(state.showLineNumbers && showLineNumbers) }
+        pushHistory()
+        syncToProperty()
     }
 
-    override fun onInput(event: FtxUIEvent): Boolean {
+    val deleteForward: () -> Unit = {
+        val col = cursorCol.coerceIn(0, currentLine().length)
+        val line = currentLine()
+        if (col < line.length) {
+            lines[cursorLine] = line.substring(0, col) + line.substring(col + 1)
+        } else if (cursorLine < lines.lastIndex) {
+            lines[cursorLine] = line + lines[cursorLine + 1]
+            lines.removeAt(cursorLine + 1)
+        }
+        pushHistory()
+        syncToProperty()
+    }
+
+    val applyUndo: () -> Unit = {
+        if (history.canUndo) {
+            suppressHistoryPush = true
+            val snapshot = history.undo()
+            lines = snapshot.toMutableList().ifEmpty { mutableListOf("") }
+            cursorLine = cursorLine.coerceAtMost(lines.lastIndex)
+            cursorCol = cursorCol.coerceAtMost(currentLine().length)
+            ensureScrollCoversSelection()
+            suppressHistoryPush = false
+            syncToProperty()
+        }
+    }
+
+    val applyRedo: () -> Unit = {
+        if (history.canRedo) {
+            suppressHistoryPush = true
+            val snapshot = history.redo()
+            lines = snapshot.toMutableList().ifEmpty { mutableListOf("") }
+            cursorLine = cursorLine.coerceAtMost(lines.lastIndex)
+            cursorCol = cursorCol.coerceAtMost(currentLine().length)
+            ensureScrollCoversSelection()
+            suppressHistoryPush = false
+            syncToProperty()
+        }
+    }
+
+    val renderCursorLine: (String) -> Element = { line ->
+        val col = cursorCol.coerceIn(0, line.length)
+        val before = line.substring(0, col)
+        val cursorChar = if (col < line.length) line[col].toString() else " "
+        val after = if (col < line.length) line.substring(col + 1) else ""
+        val cursorEl = text(cursorChar)
+        val styledCursor = run {
+            val fg = style.cursorForeground
+            val bg = style.cursorBackground
+            when {
+                fg != null && bg != null -> cursorEl.color(fg).bgcolor(bg)
+                fg != null -> cursorEl.color(fg)
+                bg != null -> cursorEl.bgcolor(bg)
+                else -> cursorEl.inverted()
+            }
+        }
+        hbox(
+            if (before.isNotEmpty()) text(before) else emptyElement(),
+            styledCursor,
+            if (after.isNotEmpty()) text(after) else emptyElement(),
+        )
+    }
+
+    val base = focusableRenderer { focused ->
+        // Sync external property if it changed from the outside
+        val currentContent = content.get()
+        if (currentContent != getText()) {
+            lines = currentContent.split("\n").toMutableList().ifEmpty { mutableListOf("") }
+            cursorLine = cursorLine.coerceAtMost(lines.lastIndex)
+            cursorCol = cursorCol.coerceAtMost(currentLine().length)
+        }
+
+        val visH = contentHeight()
+        val lineNumWidth = if (showLineNumbers) lines.size.toString().length else 0
+        ensureScrollCoversSelection()
+
+        val slice = lines.drop(scrollOffset).take(visH)
+        val rows = slice.mapIndexed { i, line ->
+            val absLine = scrollOffset + i
+            val lineEl = if (absLine == cursorLine && focused) renderCursorLine(line) else text(line.ifEmpty { " " })
+            if (showLineNumbers) {
+                val numText = text("${(absLine + 1).toString().padStart(lineNumWidth)} ")
+                val styledNum = style.lineNumbersColor?.let { numText.color(it) } ?: numText.dim()
+                hbox(styledNum, lineEl.flex())
+            } else {
+                lineEl
+            }
+        }
+
+        val filled = rows + (rows.size until visH).map {
+            if (showLineNumbers) {
+                val fillerText = text(" ".repeat(lineNumWidth + 1))
+                val styledFiller = style.lineNumbersColor?.let { fillerText.color(it) } ?: fillerText.dim()
+                hbox(styledFiller, text(" ").flex())
+            } else text(" ")
+        }
+
+        hbox(
+            vbox(*filled.toTypedArray()).flex(),
+            vScrollBar(scrollOffset, lines.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
+        )
+    }
+
+    return base.catchEvent { event ->
         val oldLine = cursorLine
         val oldCol = cursorCol
         val oldScroll = scrollOffset
@@ -86,220 +267,6 @@ open class TextEditorView(
                 notifyStateChange()
             }
         }
-        return handled
+        handled
     }
-
-    private fun notifyStateChange() {
-        val newState = TextEditorState(
-            content = getText(),
-            showLineNumbers = showLineNumbers,
-            cursorLine = cursorLine,
-            cursorCol = cursorCol,
-            scrollOffset = scrollOffset
-        )
-        onStateChange?.invoke(newState)
-    }
-
-    // -----------------------------------------------------------------------
-    // Editing operations
-    // -----------------------------------------------------------------------
-
-    private fun insertChar(char: String) {
-        val col = cursorCol.coerceIn(0, currentLine().length)
-        val line = currentLine()
-        lines[cursorLine] = line.substring(0, col) + char + line.substring(col)
-        cursorCol = col + char.length
-        pushHistory()
-        onContentChange?.invoke(getText())
-    }
-
-    private fun insertNewline() {
-        val col = cursorCol.coerceIn(0, currentLine().length)
-        val line = currentLine()
-        lines[cursorLine] = line.substring(0, col)
-        lines.add(cursorLine + 1, line.substring(col))
-        cursorLine++
-        cursorCol = 0
-        ensureScrollCoversSelection()
-        pushHistory()
-        onContentChange?.invoke(getText())
-    }
-
-    private fun backspace() {
-        val col = cursorCol.coerceIn(0, currentLine().length)
-        if (col > 0) {
-            val line = currentLine()
-            lines[cursorLine] = line.substring(0, col - 1) + line.substring(col)
-            cursorCol = col - 1
-        } else if (cursorLine > 0) {
-            val prevLen = lines[cursorLine - 1].length
-            lines[cursorLine - 1] = lines[cursorLine - 1] + currentLine()
-            lines.removeAt(cursorLine)
-            cursorLine--
-            cursorCol = prevLen
-            ensureScrollCoversSelection()
-        }
-        pushHistory()
-        onContentChange?.invoke(getText())
-    }
-
-    private fun deleteForward() {
-        val col = cursorCol.coerceIn(0, currentLine().length)
-        val line = currentLine()
-        if (col < line.length) {
-            lines[cursorLine] = line.substring(0, col) + line.substring(col + 1)
-        } else if (cursorLine < lines.lastIndex) {
-            lines[cursorLine] = line + lines[cursorLine + 1]
-            lines.removeAt(cursorLine + 1)
-        }
-        pushHistory()
-        onContentChange?.invoke(getText())
-    }
-
-    // -----------------------------------------------------------------------
-    // Cursor movement
-    // -----------------------------------------------------------------------
-
-    private fun moveCursorUp(count: Int) {
-        cursorLine = (cursorLine - count).coerceAtLeast(0)
-        cursorCol = cursorCol.coerceAtMost(currentLine().length)
-        ensureScrollCoversSelection()
-    }
-
-    private fun moveCursorDown(count: Int) {
-        cursorLine = (cursorLine + count).coerceAtMost(lines.lastIndex)
-        cursorCol = cursorCol.coerceAtMost(currentLine().length)
-        ensureScrollCoversSelection()
-    }
-
-    private fun moveCursorLeft() {
-        if (cursorCol > 0) {
-            cursorCol--
-        } else if (cursorLine > 0) {
-            cursorLine--
-            cursorCol = currentLine().length
-            ensureScrollCoversSelection()
-        }
-    }
-
-    private fun moveCursorRight() {
-        if (cursorCol < currentLine().length) {
-            cursorCol++
-        } else if (cursorLine < lines.lastIndex) {
-            cursorLine++
-            cursorCol = 0
-            ensureScrollCoversSelection()
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Undo / redo
-    // -----------------------------------------------------------------------
-
-    private fun pushHistory() {
-        if (!suppressHistoryPush) history.push(lines.toList())
-    }
-
-    private fun applyUndo() {
-        if (!history.canUndo) return
-        suppressHistoryPush = true
-        val snapshot = history.undo()
-        lines = snapshot.toMutableList().ifEmpty { mutableListOf("") }
-        cursorLine = cursorLine.coerceAtMost(lines.lastIndex)
-        cursorCol = cursorCol.coerceAtMost(currentLine().length)
-        ensureScrollCoversSelection()
-        suppressHistoryPush = false
-        onContentChange?.invoke(getText())
-    }
-
-    private fun applyRedo() {
-        if (!history.canRedo) return
-        suppressHistoryPush = true
-        val snapshot = history.redo()
-        lines = snapshot.toMutableList().ifEmpty { mutableListOf("") }
-        cursorLine = cursorLine.coerceAtMost(lines.lastIndex)
-        cursorCol = cursorCol.coerceAtMost(currentLine().length)
-        ensureScrollCoversSelection()
-        suppressHistoryPush = false
-        onContentChange?.invoke(getText())
-    }
-
-    // -----------------------------------------------------------------------
-    // Rendering
-    // -----------------------------------------------------------------------
-
-    private fun buildElement(showNums: Boolean): Element {
-        val visH = contentHeight()
-        val lineNumWidth = if (showNums) lines.size.toString().length else 0
-        ensureScrollCoversSelection()
-
-        val slice = lines.drop(scrollOffset).take(visH)
-        val rows = slice.mapIndexed { i, line ->
-            val absLine = scrollOffset + i
-            val lineEl = if (absLine == cursorLine) renderCursorLine(line) else text(line.ifEmpty { " " })
-            if (showNums) {
-                val numText = text("${(absLine + 1).toString().padStart(lineNumWidth)} ")
-                val styledNum = style.lineNumbersColor?.let { numText.color(it) } ?: numText.dim()
-                hbox(
-                    styledNum,
-                    lineEl.flex(),
-                )
-            } else {
-                lineEl
-            }
-        }
-
-        // Fill remaining height with empty rows
-        val filled = rows + (rows.size until visH).map {
-            if (showNums) {
-                val fillerText = text(" ".repeat(lineNumWidth + 1))
-                val styledFiller = style.lineNumbersColor?.let { fillerText.color(it) } ?: fillerText.dim()
-                hbox(styledFiller, text(" ").flex())
-            }
-            else text(" ")
-        }
-
-        return hbox(
-            vbox(*filled.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, lines.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
-    }
-
-    private fun renderCursorLine(line: String): Element {
-        val col = cursorCol.coerceIn(0, line.length)
-        val before = line.substring(0, col)
-        val cursorChar = if (col < line.length) line[col].toString() else " "
-        val after = if (col < line.length) line.substring(col + 1) else ""
-        val cursorEl = text(cursorChar)
-        val styledCursor = run {
-            val fg = style.cursorForeground
-            val bg = style.cursorBackground
-            when {
-                fg != null && bg != null -> cursorEl.color(fg).bgcolor(bg)
-                fg != null -> cursorEl.color(fg)
-                bg != null -> cursorEl.bgcolor(bg)
-                else -> cursorEl.inverted()
-            }
-        }
-        return hbox(
-            if (before.isNotEmpty()) text(before) else emptyElement(),
-            styledCursor,
-            if (after.isNotEmpty()) text(after) else emptyElement(),
-        )
-    }
-
-    // -----------------------------------------------------------------------
-    // Scroll
-    // -----------------------------------------------------------------------
-
-    private fun ensureScrollCoversSelection() {
-        val visH = contentHeight()
-        if (cursorLine < scrollOffset) scrollOffset = cursorLine
-        if (cursorLine >= scrollOffset + visH) scrollOffset = cursorLine - visH + 1
-        scrollOffset = scrollOffset.coerceIn(0, maxOf(0, lines.size - visH))
-    }
-
-    private fun pageSize(): Int = maxOf(1, contentHeight() - 2)
-
-    private fun currentLine(): String = lines.getOrElse(cursorLine) { "" }
 }

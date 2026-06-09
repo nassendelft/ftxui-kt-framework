@@ -1,15 +1,15 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.*
 import nl.ncaj.ftxui.*
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
 data class Tab(
     val label: String,
-    val initialScreen: () -> Screen<*, *>,
+    val initialScreen: () -> Screen,
 )
 
 fun runTabApp(
@@ -33,15 +33,17 @@ private class TabToastData(val toast: Toast, @Volatile var progress: Float = 0f)
 
 internal class TabContext(
     val label: String,
-    initialScreen: () -> Screen<*, *>,
+    initialScreen: () -> Screen,
     private val requestFrame: () -> Unit,
 ) : Navigator {
 
-    private class ScreenEntry(val screen: Screen<*, *>, @Volatile var component: Component)
+    private class ScreenEntry(val screen: Screen, val component: Component, val tabIndex: Int)
 
     private val stack = ArrayDeque<ScreenEntry>()
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private var activeCollectionJob: Job? = null
+    private val tabSelector = IntState(0)
+    val screensContainer = tab(tabSelector)
+    private var totalComponentsAdded = 0
 
     @Volatile var activeDialog: Dialog? = null
         private set
@@ -50,7 +52,7 @@ internal class TabContext(
     @Volatile var notificationLog: List<NotificationRecord> = emptyList()
         private set
 
-    override val currentScreen: Screen<*, *>? get() = stack.lastOrNull()?.screen
+    override val currentScreen: Screen? get() = stack.lastOrNull()?.screen
     val stackSize: Int get() = stack.size
 
     var onExit: (() -> Unit)? = null
@@ -59,19 +61,30 @@ internal class TabContext(
         push(initialScreen())
     }
 
-    override fun push(screen: Screen<*, *>) {
-        @Suppress("UNCHECKED_CAST")
-        val typed = screen as Screen<Any?, Any?>
-        val component = typed.render(typed.viewModel.state.value)
-        stack.addLast(ScreenEntry(screen, component))
-        startStateCollection(screen)
+    override fun push(screen: Screen) {
+        val context = object : ScreenContext {
+            override val navigator: Navigator get() = this@TabContext
+            override fun requestRedraw() {
+                requestFrame()
+            }
+        }
+        val component = screen.build(context)
+        screensContainer.add(component)
+        val index = totalComponentsAdded++
+        stack.addLast(ScreenEntry(screen, component, index))
+        tabSelector.value = index
+        requestFrame()
     }
 
     override fun pop() {
-        activeCollectionJob?.cancel()
         if (stack.isEmpty()) return
         stack.removeLast()
-        if (stack.isEmpty()) onExit?.invoke() else startStateCollection(currentScreen!!)
+        if (stack.isEmpty()) {
+            onExit?.invoke()
+        } else {
+            tabSelector.value = stack.last().tabIndex
+            requestFrame()
+        }
     }
 
     override fun showDialog(dialog: Dialog) {
@@ -108,7 +121,7 @@ internal class TabContext(
     }
 
     fun renderActiveScreen(): Element =
-        stack.lastOrNull()?.component?.render() ?: emptyElement()
+        screensContainer.render()
 
     fun handleInput(event: FtxUIEvent): Boolean {
         val dialog = activeDialog
@@ -137,19 +150,6 @@ internal class TabContext(
         activeDialog?.let { buildSharedDialogElement(it, promptInput) }
 
     fun cancel() { scope.cancel() }
-
-    private fun startStateCollection(screen: Screen<*, *>) {
-        activeCollectionJob?.cancel()
-        @Suppress("UNCHECKED_CAST")
-        val typed = screen as Screen<Any?, Any?>
-        activeCollectionJob = scope.launch {
-            typed.viewModel.state.collect { state ->
-                val top = stack.lastOrNull()
-                if (top?.screen === typed) top.component = typed.render(state)
-                requestFrame()
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,9 +165,10 @@ internal class TabAppRunner(
 
     private val contexts: List<TabContext>
 
-    @Volatile private var activeTabIndex: Int = 0
+    private val tabSelector = IntState(0)
+    private val tabsContainer = tab(tabSelector)
 
-    private val activeContext get() = contexts[activeTabIndex]
+    private val activeContext get() = contexts[tabSelector.value]
 
     init {
         contexts = tabs.map { tab ->
@@ -177,8 +178,11 @@ internal class TabAppRunner(
             ctx.onExit = {
                 if (contexts.all { it.stackSize == 0 }) app.exit()
             }
+            tabsContainer.add(ctx.screensContainer)
         }
     }
+
+    override fun getScreenContainer(): Component = tabsContainer
 
     override fun buildContentElement(): Element = buildTabLayout()
     override fun buildActiveToastsElement(): Element? = activeContext.buildToastsElement()
@@ -186,7 +190,7 @@ internal class TabAppRunner(
     override fun isDialogActive(): Boolean = activeContext.activeDialog != null
     override fun handleActiveDialogInput(event: FtxUIEvent): Boolean = activeContext.handleInput(event)
     override fun handleScreenInput(event: FtxUIEvent): Boolean = activeContext.handleInput(event)
-    override fun activeScreen(): Screen<*, *>? = activeContext.currentScreen
+    override fun activeScreen(): Screen? = activeContext.currentScreen
     override fun activeStackSize(): Int = activeContext.stackSize
     override fun activeNotificationLog(): List<NotificationRecord> = activeContext.notificationLog
     override fun extraPerfLines(): List<String> = listOf("Stack: ${activeContext.stackSize}", "Tabs:  ${contexts.size}")
@@ -210,7 +214,7 @@ internal class TabAppRunner(
     }
 
     private fun cycleTab(dir: Int) {
-        activeTabIndex = (activeTabIndex + dir + contexts.size) % contexts.size
+        tabSelector.value = (tabSelector.value + dir + contexts.size) % contexts.size
         app.requestAnimationFrame()
     }
 
@@ -223,7 +227,7 @@ internal class TabAppRunner(
     private fun buildTabBar(): Element {
         val activeFg = style.activeTabForeground.or(Theme.current.accent)
         val tabs = contexts.mapIndexed { i, ctx ->
-            val active = i == activeTabIndex
+            val active = i == tabSelector.value
             val label = " ${ctx.label} "
             if (active) text(label).color(activeFg).bold().underlined()
             else text(label).let { t -> style.inactiveTabForeground?.let { t.color(it) } ?: t.dim() }

@@ -1,79 +1,96 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.*
 import nl.ncaj.ftxui.*
 
-open class PaginatedListView<T>(
-    private val pageSize: Int = 50,
-    private val loadThreshold: Int = 10,
-    private val loadPage: suspend (offset: Int, limit: Int) -> List<ListEntry<T>>,
-    private val renderItem: (data: T, focused: Boolean) -> Element,
-    private val renderHeader: (data: T) -> Element,
+fun <T> ScreenContext.paginatedListView(
+    pageSize: Int = 50,
+    loadThreshold: Int = 10,
+    loadPage: suspend (offset: Int, limit: Int) -> List<ListEntry<T>>,
+    renderItem: (data: T, focused: Boolean) -> Element,
+    renderHeader: (data: T) -> Element,
     toSearchString: (T) -> String = { it.toString() },
-    private val onSelect: ((ListEntry.Item<T>) -> Unit)? = null,
-    private val onTotalCount: (() -> Int?)? = null,
+    onSelect: ((ListEntry.Item<T>) -> Unit)? = null,
+    onTotalCount: (() -> Int?)? = null,
     keybindings: ListKeybindings = ListKeybindings(),
-    private val style: ListStyle = ListStyle(),
-) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
+    style: ListStyle = ListStyle()
+): Component {
+    var items by mutableStateOf(emptyList<ListEntry<T>>())
+    var isLoadingMore by mutableStateOf(false)
+    var hasMore by mutableStateOf(true)
+    var totalCount by mutableStateOf(null as Int?)
+    
+    var focusedIndex by mutableStateOf(-1)
+    var scrollOffset by mutableStateOf(0)
+    var lastListH by mutableStateOf(20)
 
-    @Volatile private var items: List<ListEntry<T>> = emptyList()
-    @Volatile private var isLoadingMore: Boolean = false
-    @Volatile private var hasMore: Boolean = true
-    @Volatile private var totalCount: Int? = null
+    val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    var loadJob: Job? = null
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    @Volatile private var loadJob: Job? = null
-
-    override fun displayItems(): List<ListEntry<T>> = items
-
-    override fun onItemActivated(item: ListEntry.Item<T>) { onSelect?.invoke(item) }
-
-    override fun moveDown(count: Int) {
-        super.moveDown(count)
-        val all = displayItems()
-        if (!isLoadingMore && hasMore && focusedIndex >= all.size - loadThreshold) loadNextPage()
+    val loadNextPage: () -> Unit = {
+        if (!isLoadingMore && hasMore) {
+            isLoadingMore = true
+            requestRedraw()
+            loadJob?.cancel()
+            loadJob = scope.launch {
+                val offset = items.count { it is ListEntry.Item }
+                val page = try { loadPage(offset, pageSize) } catch (e: Exception) { emptyList() }
+                isLoadingMore = false
+                if (page.isEmpty()) {
+                    hasMore = false
+                } else {
+                    items = items + page
+                    if (focusedIndex < 0) {
+                        focusedIndex = items.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
+                    }
+                }
+                requestRedraw()
+            }
+        }
     }
 
-    init {
-        loadNextPage()
+    val ensureValidFocus: () -> Unit = {
+        if (items.isNotEmpty()) {
+            if (focusedIndex < 0 || focusedIndex >= items.size || items[focusedIndex] is ListEntry.Header<*>) {
+                focusedIndex = items.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
+            }
+        }
     }
 
-    fun render(state: Unit = Unit): Component = renderer { buildElement() }
+    val ensureScrollCoversSelection: () -> Unit = {
+        val visH = lastListH
+        if (focusedIndex >= 0 && items.isNotEmpty()) {
+            if (focusedIndex < scrollOffset) scrollOffset = focusedIndex
+            if (focusedIndex >= scrollOffset + visH) scrollOffset = focusedIndex - visH + 1
+            scrollOffset = scrollOffset.coerceIn(0, maxOf(0, items.size - visH))
+        }
+    }
 
-    override fun onInput(event: FtxUIEvent): Boolean = handleListInput(event)
+    // Trigger initial page load
+    loadNextPage()
 
-    // -----------------------------------------------------------------------
-    // Rendering
-    // -----------------------------------------------------------------------
+    val base = focusableRenderer { focused ->
+        ensureValidFocus()
+        ensureScrollCoversSelection()
 
-    private fun buildElement(): Element {
-        val all = displayItems()
-        val swComp = buildSearchBar()
         val visH = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
-        val listH = if (swComp != null) maxOf(1, visH - 2) else visH
+        val listH = visH
         lastListH = listH
 
-        val ensuredFocus = if (focusedIndex < 0 && all.isNotEmpty()) {
-            focusedIndex = all.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
-            focusedIndex
-        } else focusedIndex
-
-        val start = scrollOffset.coerceIn(0, all.size)
-        val end = (scrollOffset + listH).coerceIn(0, all.size)
-        val slice = all.subList(start, end)
+        val start = scrollOffset.coerceIn(0, items.size)
+        val end = (scrollOffset + listH).coerceIn(0, items.size)
+        val slice = items.subList(start, end)
 
         val rows = slice.mapIndexed { i, entry ->
-            @Suppress("UNCHECKED_CAST")
             when (entry) {
                 is ListEntry.Header -> {
                     val el = renderHeader(entry.data)
                     style.headerForeground?.let { el.color(it) } ?: el
                 }
                 is ListEntry.Item   -> {
-                    val focused = (start + i) == ensuredFocus
-                    val el = renderItem(entry.data, focused)
-                    if (focused) {
+                    val isFocused = (start + i) == focusedIndex
+                    val el = renderItem(entry.data, isFocused)
+                    if (isFocused && focused) {
                         val fg = style.focusedItemForeground
                         val bg = style.focusedItemBackground
                         when {
@@ -91,50 +108,51 @@ open class PaginatedListView<T>(
             listOf(hbox(filler(), text("loading…").dim(), filler()))
         } else emptyList()
 
-        val statusRow = buildStatusRow()
+        val showing = items.count { it is ListEntry.Item }
+        val total = totalCount ?: onTotalCount?.invoke()
+        val statusRow = if (total != null) hbox(text("  "), text("Showing $showing of $total").dim(), filler()) else null
         val allRows = rows + loadingRow
         val listEl = hbox(
             vbox(*allRows.toTypedArray()).flex(),
-            vScrollBar(scrollOffset, all.size + (if (isLoadingMore) 1 else 0), listH, style.scrollThumb.or(Theme.current.scrollThumb)),
+            vScrollBar(scrollOffset, items.size + (if (isLoadingMore) 1 else 0), listH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
         val bottomEl = if (statusRow != null) vbox(listEl, separator(), statusRow) else listEl
 
-        if (!isLoadingMore && hasMore && ensuredFocus >= all.size - loadThreshold) {
+        if (!isLoadingMore && hasMore && focusedIndex >= items.size - loadThreshold) {
             loadNextPage()
         }
 
-        return if (swComp != null) vbox(swComp.render(), separator(), bottomEl) else bottomEl
+        bottomEl
     }
 
-    private fun buildStatusRow(): Element? {
-        val total = totalCount ?: onTotalCount?.invoke() ?: return null
-        val showing = items.count { it is ListEntry.Item }
-        return hbox(text("  "), text("Showing $showing of $total").dim(), filler())
-    }
-
-    // -----------------------------------------------------------------------
-    // Page loading
-    // -----------------------------------------------------------------------
-
-    private fun loadNextPage() {
-        if (isLoadingMore || !hasMore) return
-        isLoadingMore = true
-        FtxUIApp.active()?.requestAnimationFrame()
-        loadJob?.cancel()
-        loadJob = scope.launch {
-            val offset = items.count { it is ListEntry.Item }
-            val page = try { loadPage(offset, pageSize) } catch (e: Exception) { emptyList() }
-            isLoadingMore = false
-            if (page.isEmpty()) {
-                hasMore = false
-            } else {
-                items = items + page
-                if (focusedIndex < 0) {
-                    focusedIndex = items.indexOfFirst { it is ListEntry.Item }.let { if (it < 0) -1 else it }
+    return base.catchEvent { event ->
+        when {
+            event.matches(keybindings.moveUpKeys, keybindings.moveUpChars) -> {
+                var i = focusedIndex - 1
+                while (i >= 0) {
+                    if (items[i] is ListEntry.Item) { focusedIndex = i; break }
+                    i--
                 }
+                true
             }
-            FtxUIApp.active()?.requestAnimationFrame()
+            event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> {
+                var i = focusedIndex + 1
+                while (i < items.size) {
+                    if (items[i] is ListEntry.Item) { focusedIndex = i; break }
+                    i++
+                }
+                if (!isLoadingMore && hasMore && focusedIndex >= items.size - loadThreshold) loadNextPage()
+                true
+            }
+            event.matches(keybindings.selectKeys, keybindings.selectChars) -> {
+                val item = items.getOrNull(focusedIndex) as? ListEntry.Item<T>
+                if (item != null) {
+                    onSelect?.invoke(item)
+                    true
+                } else false
+            }
+            else -> false
         }
     }
 }

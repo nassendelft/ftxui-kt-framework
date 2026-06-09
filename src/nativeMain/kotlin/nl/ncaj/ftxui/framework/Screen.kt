@@ -1,28 +1,52 @@
 package nl.ncaj.ftxui.framework
 
 import nl.ncaj.ftxui.*
+import kotlin.reflect.KProperty
 
-abstract class Screen<S, E> {
-    abstract val viewModel: ViewModel<S, E>
+interface ScreenContext {
+    val navigator: Navigator
+    fun requestRedraw()
+}
+
+class MutableState<T>(
+    private var internalValue: T,
+    private val onStateChange: (T) -> Unit
+) {
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
+        return internalValue
+    }
+
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+        if (internalValue != value) {
+            internalValue = value
+            onStateChange(value)
+        }
+    }
+}
+
+fun <T> ScreenContext.mutableStateOf(initial: T): MutableState<T> =
+    MutableState(initial) { _ -> requestRedraw() }
+
+abstract class Screen {
     open val globalShortcuts: List<Shortcut> = emptyList()
-    open val activeWindow: InputReceiver? get() = null
+    open val activeWindow: Component? get() = null
 
-    // Subclasses implement this to provide their main content area.
-    protected abstract fun buildContent(state: S): Component
+    // Subclasses implement this to build their main content component once.
+    protected abstract fun buildContent(context: ScreenContext): Component
 
     // Called by the framework — wraps buildContent with the status bar.
-    fun render(state: S): Component {
-        val content = buildContent(state)
-        return renderer {
+    fun build(context: ScreenContext): Component {
+        val content = buildContent(context)
+        return renderer(child = content) {
             vbox(
                 content.render().flex(),
-                buildStatusBar(state),
+                buildStatusBar(),
             )
         }
     }
 
-    // Override to customize the entire status bar area (separator included).
-    protected open fun buildStatusBar(state: S): Element {
+    // Override to customize the status bar area (separator included).
+    protected open fun buildStatusBar(): Element {
         val visible = globalShortcuts.filter { it.showInStatusBar }
         val elems = buildList {
             add(text(" "))
@@ -36,7 +60,6 @@ abstract class Screen<S, E> {
     }
 
     open fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        if (activeWindow?.onInput(event) == true) return true
         val shortcut = globalShortcuts.find { event.isKey(it.key) }
         if (shortcut != null) { shortcut.action(); return true }
         if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) { navigator.pop(); return true }

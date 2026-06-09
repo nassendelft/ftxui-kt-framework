@@ -1,9 +1,10 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import nl.ncaj.ftxui.*
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.concurrent.Volatile
 import kotlin.time.TimeSource
 
 internal abstract class BaseAppRunner(
@@ -32,15 +33,17 @@ internal abstract class BaseAppRunner(
     protected abstract fun isDialogActive(): Boolean
     protected abstract fun handleActiveDialogInput(event: FtxUIEvent): Boolean
     protected abstract fun handleScreenInput(event: FtxUIEvent): Boolean
-    protected abstract fun activeScreen(): Screen<*, *>?
+    protected abstract fun activeScreen(): Screen?
     protected abstract fun activeStackSize(): Int
     protected abstract fun activeNotificationLog(): List<NotificationRecord>
     protected open fun extraPerfLines(): List<String> = emptyList()
     protected open fun extraHelpRows(): List<Element> = emptyList()
     protected open fun handleExtraInput(event: FtxUIEvent): Boolean = false
 
+    protected abstract fun getScreenContainer(): Component
+
     protected fun createRootComponent(): Component {
-        return renderer {
+        return renderer(child = getScreenContainer()) {
             measureFrame()
             var el = buildContentElement()
             buildActiveToastsElement()?.let { el = dbox(el, it) }

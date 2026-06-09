@@ -1,130 +1,75 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import nl.ncaj.ftxui.*
 
 data class PagerState(
     val lines: List<String>,
-    val showLineNumbers: Boolean = false,
-    val scrollOffset: Int = 0,
-    val searching: Boolean = false,
-    val searchQuery: String = "",
-    val matchLines: List<Int> = emptyList(),
-    val matchIndex: Int = 0
+    val showLineNumbers: Boolean = false
 )
 
-open class PagerView(
-    private val onStateChange: ((PagerState) -> Unit)? = null,
-    private val keybindings: PagerKeybindings = PagerKeybindings(),
-    private val style: PagerStyle = PagerStyle(),
-) : InputReceiver {
+fun ScreenContext.pagerView(
+    getState: () -> PagerState,
+    keybindings: PagerKeybindings = PagerKeybindings(),
+    style: PagerStyle = PagerStyle()
+): Component {
+    var scrollOffset by mutableStateOf(0)
+    var searching by mutableStateOf(false)
+    var searchQuery by mutableStateOf("")
+    var matchLines by mutableStateOf(emptyList<Int>())
+    var matchIndex by mutableStateOf(0)
 
-    @Volatile private var state: PagerState = PagerState(emptyList())
-    @Volatile private var scrollOffset: Int = 0
-    @Volatile private var searching: Boolean = false
-    @Volatile private var searchQuery: String = ""
-    @Volatile private var matchLines: List<Int> = emptyList()
-    @Volatile private var matchIndex: Int = 0
+    val getContentHeight: () -> Int = { Terminal.size().dimy }
+    val maxScroll: () -> Int = { maxOf(0, getState().lines.size - getContentHeight()) }
+    val pageSize: () -> Int = { maxOf(1, getContentHeight() - 2) }
 
-    fun updateState(newState: PagerState) {
-        state = newState
-        if (onStateChange != null) {
-            scrollOffset = newState.scrollOffset
-            searching = newState.searching
-            searchQuery = newState.searchQuery
-            matchLines = newState.matchLines
-            matchIndex = newState.matchIndex
-        } else {
-            recomputeMatches()
-        }
-        clampScroll()
-    }
-
-    fun render(state: PagerState): Component {
-        this.state = state
-        if (onStateChange != null) {
-            this.scrollOffset = state.scrollOffset
-            this.searching = state.searching
-            this.searchQuery = state.searchQuery
-            this.matchLines = state.matchLines
-            this.matchIndex = state.matchIndex
-        }
-        return renderer { buildElement() }
-    }
-
-    override fun onInput(event: FtxUIEvent): Boolean {
-        val oldScroll = scrollOffset
-        val oldSearching = searching
-        val oldQuery = searchQuery
-        val oldMatchIndex = matchIndex
-
-        val handled = if (searching) handleSearchInput(event) else handleNormalInput(event)
-
-        if (handled) {
-            if (scrollOffset != oldScroll || searching != oldSearching || searchQuery != oldQuery || matchIndex != oldMatchIndex) {
-                notifyStateChange()
+    val scrollToMatch: (Int) -> Unit = { idx ->
+        val line = matchLines.getOrNull(idx)
+        if (line != null) {
+            val h = getContentHeight()
+            if (line < scrollOffset || line >= scrollOffset + h) {
+                scrollOffset = (line - h / 2).coerceIn(0, maxScroll())
             }
         }
-        return handled
     }
 
-    private fun notifyStateChange() {
-        val newState = PagerState(
-            lines = state.lines,
-            showLineNumbers = state.showLineNumbers,
-            scrollOffset = scrollOffset,
-            searching = searching,
-            searchQuery = searchQuery,
-            matchLines = matchLines,
-            matchIndex = matchIndex
-        )
-        onStateChange?.invoke(newState)
-    }
-
-    private fun handleNormalInput(event: FtxUIEvent): Boolean = when {
-        event.matches(keybindings.scrollUpKeys, keybindings.scrollUpChars)   -> { scroll(-1); true }
-        event.matches(keybindings.scrollDownKeys, keybindings.scrollDownChars) -> { scroll(+1); true }
-        event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { scroll(-pageSize()); true }
-        event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { scroll(+pageSize()); true }
-        event.matches(keybindings.homeKeys, keybindings.homeChars)   -> { scrollOffset = 0; true }
-        event.matches(keybindings.endKeys, keybindings.endChars)   -> { scrollOffset = maxScroll(); true }
-        event.matches(keybindings.searchKeys, keybindings.searchChars) -> {
-            searching = true
-            searchQuery = ""
+    val recomputeMatches: () -> Unit = {
+        val state = getState()
+        if (searchQuery.isEmpty()) {
             matchLines = emptyList()
             matchIndex = 0
-            true
+        } else {
+            val q = searchQuery.lowercase()
+            matchLines = state.lines.indices.filter { i -> state.lines[i].lowercase().contains(q) }
+            matchIndex = 0
+            if (matchLines.isNotEmpty()) scrollToMatch(0)
         }
-        event.matches(keybindings.nextMatchKeys, keybindings.nextMatchChars) && matchLines.isNotEmpty() -> { stepMatch(+1); true }
-        event.matches(keybindings.prevMatchKeys, keybindings.prevMatchChars) && matchLines.isNotEmpty() -> { stepMatch(-1); true }
-        else -> false
     }
 
-    private fun handleSearchInput(event: FtxUIEvent): Boolean {
-        when {
-            event.isKey(Key.Escape) -> searching = false
-            event.isKey(Key.Return) -> searching = false
-            event.isKey(Key.Backspace) -> {
-                if (searchQuery.isNotEmpty()) {
-                    searchQuery = searchQuery.dropLast(1)
-                    recomputeMatches()
-                } else {
-                    searching = false
-                }
-            }
-            event is FtxUIEvent.Character -> {
-                searchQuery += event.character
-                recomputeMatches()
-            }
+    val stepMatch: (Int) -> Unit = { dir ->
+        if (matchLines.isNotEmpty()) {
+            matchIndex = (matchIndex + dir + matchLines.size) % matchLines.size
+            scrollToMatch(matchIndex)
         }
-        return true
     }
 
-    private fun buildElement(): Element {
+    val buildHighlightedLine: (String, String) -> Element = { line, query ->
+        val idx = line.lowercase().indexOf(query.lowercase())
+        if (idx < 0) text(line)
+        else {
+            val before = line.substring(0, idx)
+            val match  = line.substring(idx, idx + query.length)
+            val after  = line.substring(idx + query.length)
+            val highlightColor = style.searchHighlight.or(Theme.current.accent)
+            hbox(text(before), text(match).color(highlightColor).bold(), text(after))
+        }
+    }
+
+    val base = focusableRenderer { focused ->
+        val state = getState()
         val lines = state.lines
         val hasSearch = searching || searchQuery.isNotEmpty()
         val contentH = if (hasSearch) maxOf(1, getContentHeight() - 2) else getContentHeight()
-        clampScroll()
+        scrollOffset = scrollOffset.coerceIn(0, maxScroll())
 
         val lineNumWidth = if (state.showLineNumbers) lines.size.toString().length else 0
         val slice = lines.drop(scrollOffset).take(contentH)
@@ -150,7 +95,7 @@ open class PagerView(
             vScrollBar(scrollOffset, lines.size, contentH, style.scrollThumb.or(Theme.current.scrollThumb)),
         )
 
-        if (!hasSearch) return contentEl
+        if (!hasSearch) return@focusableRenderer contentEl
 
         val matchStatus = when {
             searchQuery.isEmpty()    -> ""
@@ -162,54 +107,46 @@ open class PagerView(
             if (searching) text(queryText) else text(queryText).dim(),
             text(matchStatus).dim(),
         )
-        return vbox(contentEl, separator(), searchEl)
+        vbox(contentEl, separator(), searchEl)
     }
 
-    private fun buildHighlightedLine(line: String, query: String): Element {
-        val idx = line.lowercase().indexOf(query.lowercase())
-        if (idx < 0) return text(line)
-        val before = line.substring(0, idx)
-        val match  = line.substring(idx, idx + query.length)
-        val after  = line.substring(idx + query.length)
-        val highlightColor = style.searchHighlight.or(Theme.current.accent)
-        return hbox(text(before), text(match).color(highlightColor).bold(), text(after))
-    }
-
-    private fun recomputeMatches() {
-        if (searchQuery.isEmpty()) {
-            matchLines = emptyList()
-            matchIndex = 0
-            return
+    return base.catchEvent { event ->
+        if (searching) {
+            when {
+                event.isKey(Key.Escape) || event.isKey(Key.Return) -> searching = false
+                event.isKey(Key.Backspace) -> {
+                    if (searchQuery.isNotEmpty()) {
+                        searchQuery = searchQuery.dropLast(1)
+                        recomputeMatches()
+                    } else {
+                        searching = false
+                    }
+                }
+                event is FtxUIEvent.Character -> {
+                    searchQuery += event.character
+                    recomputeMatches()
+                }
+            }
+            true
+        } else {
+            when {
+                event.matches(keybindings.scrollUpKeys, keybindings.scrollUpChars)   -> { scrollOffset = (scrollOffset - 1).coerceIn(0, maxScroll()); true }
+                event.matches(keybindings.scrollDownKeys, keybindings.scrollDownChars) -> { scrollOffset = (scrollOffset + 1).coerceIn(0, maxScroll()); true }
+                event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { scrollOffset = (scrollOffset - pageSize()).coerceIn(0, maxScroll()); true }
+                event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { scrollOffset = (scrollOffset + pageSize()).coerceIn(0, maxScroll()); true }
+                event.matches(keybindings.homeKeys, keybindings.homeChars)   -> { scrollOffset = 0; true }
+                event.matches(keybindings.endKeys, keybindings.endChars)   -> { scrollOffset = maxScroll(); true }
+                event.matches(keybindings.searchKeys, keybindings.searchChars) -> {
+                    searching = true
+                    searchQuery = ""
+                    matchLines = emptyList()
+                    matchIndex = 0
+                    true
+                }
+                event.matches(keybindings.nextMatchKeys, keybindings.nextMatchChars) && matchLines.isNotEmpty() -> { stepMatch(+1); true }
+                event.matches(keybindings.prevMatchKeys, keybindings.prevMatchChars) && matchLines.isNotEmpty() -> { stepMatch(-1); true }
+                else -> false
+            }
         }
-        val q = searchQuery.lowercase()
-        matchLines = state.lines.indices.filter { i -> state.lines[i].lowercase().contains(q) }
-        matchIndex = 0
-        if (matchLines.isNotEmpty()) scrollToMatch(0)
     }
-
-    private fun stepMatch(dir: Int) {
-        if (matchLines.isEmpty()) return
-        matchIndex = (matchIndex + dir + matchLines.size) % matchLines.size
-        scrollToMatch(matchIndex)
-    }
-
-    private fun scrollToMatch(idx: Int) {
-        val line = matchLines.getOrNull(idx) ?: return
-        val h = getContentHeight()
-        if (line < scrollOffset || line >= scrollOffset + h) {
-            scrollOffset = (line - h / 2).coerceIn(0, maxScroll())
-        }
-    }
-
-    private fun scroll(delta: Int) {
-        scrollOffset = (scrollOffset + delta).coerceIn(0, maxScroll())
-    }
-
-    private fun clampScroll() {
-        scrollOffset = scrollOffset.coerceIn(0, maxScroll())
-    }
-
-    private fun getContentHeight(): Int = Terminal.size().dimy
-    private fun pageSize(): Int = maxOf(1, getContentHeight() - 2)
-    private fun maxScroll(): Int = maxOf(0, state.lines.size - getContentHeight())
 }

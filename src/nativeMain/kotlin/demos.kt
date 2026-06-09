@@ -10,38 +10,39 @@ import kotlin.time.Duration.Companion.milliseconds
 // Screen — Text Editor demo
 // =============================================================================
 
-class TextEditorDemoScreen : Screen<TextEditorState, Nothing>() {
-    override val viewModel = object : ViewModel<TextEditorState, Nothing>() {
-        override val state = MutableStateFlow(TextEditorState(INITIAL_TEXT))
-        override fun onEvent(event: Nothing) {}
-    }
+class TextEditorDemoScreen : Screen() {
+    private var editorText = INITIAL_TEXT
+    private var editorState = TextEditorState(INITIAL_TEXT)
+    private var navigator: Navigator? = null
+    private lateinit var editorComponent: Component
 
-    private lateinit var navigator: Navigator
-
-    private val editorWindow = TextEditorView(
-        showLineNumbers = true,
-        onContentChange = { text ->
-            Logger.debug("Editor: ${text.lines().size} lines")
-        },
-        onStateChange = { newState ->
-            (viewModel.state as MutableStateFlow).value = newState
-        }
-    )
-
-    override val activeWindow get() = editorWindow
+    override val activeWindow get() = editorComponent
 
     override val globalShortcuts get() = listOf(
         Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
-            val lines = editorWindow.getText().lines().size
-            navigator.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
+            val lines = editorText.lines().size
+            navigator?.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
         },
     )
 
-    override fun buildContent(state: TextEditorState): Component = editorWindow.render(state)
+    override fun buildContent(context: ScreenContext): Component {
+        editorComponent = context.textEditorView(
+            content = ::editorText,
+            showLineNumbers = true,
+            onContentChange = { text ->
+                Logger.debug("Editor: ${text.lines().size} lines")
+            },
+            onStateChange = { newState ->
+                editorState = newState
+                context.requestRedraw()
+            }
+        )
+        return editorComponent
+    }
 
-    override fun buildStatusBar(state: TextEditorState): Element {
-        val baseStatusBar = super.buildStatusBar(state)
-        val cursorInfo = "  Ln ${state.cursorLine + 1}, Col ${state.cursorCol + 1}  "
+    override fun buildStatusBar(): Element {
+        val baseStatusBar = super.buildStatusBar()
+        val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
         return hbox(baseStatusBar, filler(), text(cursorInfo).dim())
     }
 
@@ -72,25 +73,22 @@ class TextEditorDemoScreen : Screen<TextEditorState, Nothing>() {
 // Screen — File Picker demo
 // =============================================================================
 
-class FilePickerDemoScreen : Screen<FilePickerState, Nothing>() {
-    override val viewModel = object : ViewModel<FilePickerState, Nothing>() {
-        override val state = MutableStateFlow(FilePickerState())
-        override fun onEvent(event: Nothing) {}
+class FilePickerDemoScreen : Screen() {
+    private lateinit var pickerComponent: Component
+    private var navigator: Navigator? = null
+
+    override val activeWindow get() = pickerComponent
+
+    override fun buildContent(context: ScreenContext): Component {
+        pickerComponent = context.filePickerView(
+            initialPath = ".",
+            onFileSelected = { path ->
+                navigator?.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
+                navigator?.pop()
+            }
+        )
+        return pickerComponent
     }
-
-    private lateinit var navigator: Navigator
-
-    private val picker = FilePickerView(
-        initialPath = ".",
-        onFileSelected = { path ->
-            navigator.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
-            navigator.pop()
-        },
-    )
-
-    override val activeWindow get() = picker
-
-    override fun buildContent(state: FilePickerState): Component = picker.render(state)
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator
@@ -102,117 +100,107 @@ class FilePickerDemoScreen : Screen<FilePickerState, Nothing>() {
 // Screen — Dashboard demo
 // =============================================================================
 
-class DashboardDemoScreen : Screen<Unit, Nothing>() {
-    override val viewModel = object : ViewModel<Unit, Nothing>() {
-        override val state = MutableStateFlow(Unit)
-        override fun onEvent(event: Nothing) {}
+class DashboardDemoScreen : Screen() {
+    private lateinit var dashboardComponent: Component
+
+    override val activeWindow get() = dashboardComponent
+
+    override fun buildContent(context: ScreenContext): Component {
+        val fruits = listOf("Apple", "Banana", "Cherry", "Dragon Fruit", "Elderberry", "Fig")
+            .map { ListEntry.Item(it) }
+        val fruitList = context.listView(
+            getEntries = { fruits },
+            renderItem = { name, focused ->
+                if (focused) text("  $name").inverted() else text("  $name")
+            },
+            renderHeader = { name -> hbox(text("  $name").bold(), filler()) }
+        )
+
+        val veggies = listOf("Artichoke", "Broccoli", "Carrot", "Daikon", "Eggplant")
+            .map { ListEntry.Item(it) }
+        val vegList = context.listView(
+            getEntries = { veggies },
+            renderItem = { name, focused ->
+                if (focused) text("  $name").inverted() else text("  $name")
+            },
+            renderHeader = { name -> hbox(text("  $name").bold(), filler()) }
+        )
+
+        val pagerState = PagerState(listOf(
+            "Dashboard Window", "──────────────────",
+            "Four cells in a 2×2 grid.",
+            "Tab / Shift+Tab cycles focus.",
+            "Focused cell receives key input.",
+            "Each cell wraps any Window type.",
+        ))
+        val pager = context.pagerView(
+            getState = { pagerState }
+        )
+
+        val stats = renderer {
+            vbox(
+                hbox(text("  Fruits:     "), text("6").color(Theme.current.success)),
+                hbox(text("  Vegetables: "), text("5").color(Theme.current.accent)),
+                hbox(text("  Total:      "), text("11").bold()),
+                filler(),
+            )
+        }
+
+        dashboardComponent = context.dashboardView(
+            columns = 2,
+            cells = listOf(
+                DashboardCell(
+                    title = "Fruits",
+                    render = { fruitList }
+                ),
+                DashboardCell(
+                    title = "Vegetables",
+                    render = { vegList }
+                ),
+                DashboardCell(
+                    title = "Notes",
+                    render = { pager }
+                ),
+                DashboardCell(
+                    title = "Stats",
+                    render = { stats }
+                )
+            )
+        )
+        return dashboardComponent
     }
-
-    private val fruitList = ListView<String>(
-        renderItem = { name, focused ->
-            if (focused) text("  $name").inverted() else text("  $name")
-        },
-        renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
-    )
-
-    private val vegList = ListView<String>(
-        renderItem = { name, focused ->
-            if (focused) text("  $name").inverted() else text("  $name")
-        },
-        renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
-    )
-
-    private val fruitState = ListState(
-        listOf("Apple", "Banana", "Cherry", "Dragon Fruit", "Elderberry", "Fig")
-            .map { ListEntry.Item(it) as ListEntry<String> }
-    )
-
-    private val vegState = ListState(
-        listOf("Artichoke", "Broccoli", "Carrot", "Daikon", "Eggplant")
-            .map { ListEntry.Item(it) as ListEntry<String> }
-    )
-
-    private val pager = PagerView()
-    private val pagerState = PagerState(listOf(
-        "Dashboard Window", "──────────────────",
-        "Four cells in a 2×2 grid.",
-        "Tab / Shift+Tab cycles focus.",
-        "Focused cell receives key input.",
-        "Each cell wraps any Window type.",
-    ))
-
-    private val dashboard = DashboardView(
-        columns = 2,
-        cells = listOf(
-            DashboardCell(
-                title = "Fruits",
-                render = { fruitList.render(fruitState) },
-                onInput = { event -> fruitList.onInput(event) },
-            ),
-            DashboardCell(
-                title = "Vegetables",
-                render = { vegList.render(vegState) },
-                onInput = { event -> vegList.onInput(event) },
-            ),
-            DashboardCell(
-                title = "Notes",
-                render = { pager.render(pagerState) },
-                onInput = { event -> pager.onInput(event) },
-            ),
-            DashboardCell(
-                title = "Stats",
-                render = {
-                    renderer {
-                        vbox(
-                            hbox(text("  Fruits:     "), text("6").color(Theme.current.success)),
-                            hbox(text("  Vegetables: "), text("5").color(Theme.current.accent)),
-                            hbox(text("  Total:      "), text("11").bold()),
-                            filler(),
-                        )
-                    }
-                },
-            ),
-        ),
-    )
-
-    override val activeWindow get() = dashboard
-
-    override fun buildContent(state: Unit): Component = dashboard.render(0)
 }
 
 // =============================================================================
 // Screen — Paginated list demo
 // =============================================================================
 
-class PaginatedListDemoScreen : Screen<Unit, Nothing>() {
-    override val viewModel = object : ViewModel<Unit, Nothing>() {
-        override val state = MutableStateFlow(Unit)
-        override fun onEvent(event: Nothing) {}
-    }
-
-    private lateinit var navigator: Navigator
-
-    private val pagedList = PaginatedListView<String>(
-        pageSize = 25,
-        loadThreshold = 5,
-        loadPage = { offset, limit ->
-            delay(300.milliseconds)
-            val total = 200
-            (offset until minOf(offset + limit, total)).map { i ->
-                ListEntry.Item("Item #${(i + 1).toString().padStart(3)} — batch ${offset / limit + 1}")
-            }
-        },
-        renderItem = { name, focused ->
-            if (focused) text("  $name").inverted() else text("  $name")
-        },
-        renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
-        onSelect = { item -> navigator.notify("Selected: ${item.data}", Toast.SHORT) },
-        onTotalCount = { 200 },
-    )
+class PaginatedListDemoScreen : Screen() {
+    private lateinit var pagedList: Component
+    private var navigator: Navigator? = null
 
     override val activeWindow get() = pagedList
 
-    override fun buildContent(state: Unit): Component = pagedList.render(Unit)
+    override fun buildContent(context: ScreenContext): Component {
+        pagedList = context.paginatedListView(
+            pageSize = 25,
+            loadThreshold = 5,
+            loadPage = { offset, limit ->
+                delay(300.milliseconds)
+                val total = 200
+                (offset until minOf(offset + limit, total)).map { i ->
+                    ListEntry.Item("Item #${(i + 1).toString().padStart(3)} — batch ${offset / limit + 1}")
+                }
+            },
+            renderItem = { name, focused ->
+                if (focused) text("  $name").inverted() else text("  $name")
+            },
+            renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
+            onSelect = { item -> navigator?.notify("Selected: ${item.data}", Toast.SHORT) },
+            onTotalCount = { 200 },
+        )
+        return pagedList
+    }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator
@@ -285,10 +273,11 @@ class StepDemoViewModel : ViewModel<StepProgressState, StepDemoEvent>() {
     }
 }
 
-class StepProgressDemoScreen : Screen<StepProgressState, StepDemoEvent>() {
-    override val viewModel = StepDemoViewModel()
+class StepProgressDemoScreen : Screen() {
+    val viewModel = StepDemoViewModel()
 
-    private lateinit var navigator: Navigator
+    private var navigator: Navigator? = null
+    private lateinit var progressComponent: Component
 
     override val globalShortcuts get() = listOf(
         Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
@@ -299,11 +288,19 @@ class StepProgressDemoScreen : Screen<StepProgressState, StepDemoEvent>() {
         },
     )
 
-    private val progressWindow = StepProgressView()
+    override val activeWindow get() = progressComponent
 
-    override val activeWindow get() = progressWindow
-
-    override fun buildContent(state: StepProgressState): Component = progressWindow.render(state)
+    override fun buildContent(context: ScreenContext): Component {
+        GlobalScope.launch {
+            viewModel.state.collect {
+                context.requestRedraw()
+            }
+        }
+        progressComponent = context.stepProgressView(
+            getState = { viewModel.state.value }
+        )
+        return progressComponent
+    }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator
@@ -315,31 +312,54 @@ class StepProgressDemoScreen : Screen<StepProgressState, StepDemoEvent>() {
 // Screen — Responsive layout demo
 // =============================================================================
 
-data class ResponsiveDemoState(
-    val listState: ListState<String>,
-    val detailState: PagerState
-)
+class ResponsiveDemoScreen : Screen() {
+    private val items = (1..10).map { i -> ListEntry.Item("Item $i") }
+    private var selectedItemName = "Item 1"
+    private var detailState = PagerState(getDetails("Item 1"))
+    private var navigator: Navigator? = null
 
-class ResponsiveDemoViewModel : ViewModel<ResponsiveDemoState, Nothing>() {
-    private val initialItems = (1..10).map { i -> ListEntry.Item("Item $i") as ListEntry<String> }
+    private lateinit var leftList: Component
+    private lateinit var rightPager: Component
+    private lateinit var splitView: Component
 
-    private val _state = MutableStateFlow(ResponsiveDemoState(
-        listState = ListState(initialItems, focusedIndex = 0),
-        detailState = PagerState(getDetails("Item 1"))
-    ))
-    override val state: StateFlow<ResponsiveDemoState> = _state
+    override val activeWindow get() = if (Terminal.size().dimx >= 100) splitView else leftList
 
-    override fun onEvent(event: Nothing) {}
-
-    fun updateListState(newListState: ListState<String>) {
-        val selectedIndex = newListState.focusedIndex
-        val selectedItem = newListState.entries.getOrNull(selectedIndex) as? ListEntry.Item<String>
-        val itemName = selectedItem?.data ?: "none"
-
-        _state.value = _state.value.copy(
-            listState = newListState,
-            detailState = PagerState(getDetails(itemName))
+    override fun buildContent(context: ScreenContext): Component {
+        leftList = context.listView(
+            getEntries = { items },
+            renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
+            renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
+            onFocusChange = { idx ->
+                val entry = items.getOrNull(idx)
+                selectedItemName = entry?.data ?: "none"
+                detailState = PagerState(getDetails(selectedItemName))
+                context.requestRedraw()
+            }
         )
+
+        rightPager = context.pagerView(
+            getState = { detailState }
+        )
+
+        splitView = context.splitView(
+            left = leftList,
+            right = rightPager,
+            leftTitle = "Items",
+            rightTitle = "Details"
+        )
+
+        return renderer {
+            responsive(breakpoint = 100,
+                narrow = { leftList },
+                wide   = { splitView },
+            ).render()
+        }
+    }
+
+    override fun buildStatusBar(): Element {
+        val w = Terminal.size().dimx
+        val mode = if (w >= 100) "wide (split)" else "narrow (single)"
+        return hbox(text(" "), text("width: $w  mode: $mode").dim(), filler())
     }
 
     private fun getDetails(itemName: String) = listOf(
@@ -354,29 +374,4 @@ class ResponsiveDemoViewModel : ViewModel<ResponsiveDemoState, Nothing>() {
         "",
         "Width: ${Terminal.size().dimx} columns."
     )
-}
-
-class ResponsiveDemoScreen : Screen<ResponsiveDemoState, Nothing>() {
-    override val viewModel = ResponsiveDemoViewModel()
-
-    private val leftList = ListView<String>(
-        renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
-        renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
-        onStateChange = { viewModel.updateListState(it) }
-    )
-    private val rightPager = PagerView()
-    private val splitView = SplitView(leftList, rightPager, "Items", "Details")
-
-    override val activeWindow: InputReceiver get() = if (Terminal.size().dimx >= 100) splitView else leftList
-
-    override fun buildContent(state: ResponsiveDemoState): Component = responsive(breakpoint = 100,
-        narrow = { leftList.render(state.listState) },
-        wide   = { splitView.render(leftList.render(state.listState), rightPager.render(state.detailState)) },
-    )
-
-    override fun buildStatusBar(state: ResponsiveDemoState): Element {
-        val w = Terminal.size().dimx
-        val mode = if (w >= 100) "wide (split)" else "narrow (single)"
-        return hbox(text(" "), text("width: $w  mode: $mode").dim(), filler())
-    }
 }

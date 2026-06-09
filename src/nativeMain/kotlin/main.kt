@@ -25,8 +25,8 @@ data class Fruit(val name: String, val category: String)
 
 data class MenuItem(val label: String, val description: String = "")
 
-class HomeScreen : Screen<Unit, Nothing>() {
-    override val viewModel = object : ViewModel<Unit, Nothing>() {
+class HomeScreen : Screen() {
+    val viewModel = object : ViewModel<Unit, Nothing>() {
         override val state = MutableStateFlow(Unit)
         override fun onEvent(event: Nothing) {}
     }
@@ -39,29 +39,16 @@ class HomeScreen : Screen<Unit, Nothing>() {
         },
     )
 
-    private val listWindow = ListView<MenuItem>(
-        renderItem = { item, focused ->
-            val label = text("  ${item.label.padEnd(20)} ")
-            val desc  = text(item.description).dim()
-            if (focused) hbox(label, desc).inverted() else hbox(label, desc)
-        },
-        renderHeader = { item ->
-            hbox(text("  ─── ${item.label} ───").bold(), filler())
-        },
-        toSearchString = { it.label },
-    )
-
-    override val activeWindow get() = listWindow
-
-    override fun buildContent(state: Unit): Component {
-        val entries = ListState(buildList {
+    override fun buildContent(context: ScreenContext): Component {
+        this.navigator = context.navigator
+        val entries = buildList {
             add(ListEntry.Header(MenuItem("Windows")))
-            add(ListEntry.Item(MenuItem("Fruit List",       "Scrollable list with fuzzy search")) { navigator.push(FruitListScreen()) })
-            add(ListEntry.Item(MenuItem("Table View",       "Sortable 2D table  (s = sort  j/k = nav)")) { navigator.push(TableDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Pager",            "Read-only text with search & line numbers")) { navigator.push(PagerDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Split View",       "Two-panel layout with Tab focus")) { navigator.push(SplitDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Tree View",        "Hierarchical tree with expand/collapse")) { navigator.push(TreeDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Async Loading",    "ViewModel with coroutine-based loading")) { navigator.push(AsyncDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Fruit List",       "Scrollable list with fuzzy search")) { context.navigator.push(FruitListScreen()) })
+            add(ListEntry.Item(MenuItem("Table View",       "Sortable 2D table  (s = sort  j/k = nav)")) { context.navigator.push(TableDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Pager",            "Read-only text with search & line numbers")) { context.navigator.push(PagerDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Split View",       "Two-panel layout with Tab focus")) { context.navigator.push(SplitDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Tree View",        "Hierarchical tree with expand/collapse")) { context.navigator.push(TreeDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Async Loading",    "ViewModel with coroutine-based loading")) { context.navigator.push(AsyncDemoScreen()) })
 
             add(ListEntry.Header(MenuItem("Dialogs")))
             add(ListEntry.Item(MenuItem("Alert",            "Informational dismissible overlay")) {
@@ -127,8 +114,20 @@ class HomeScreen : Screen<Unit, Nothing>() {
 
             add(ListEntry.Header(MenuItem("App  (^Alt+P = perf  Ctrl+C = confirm quit)")))
             add(ListEntry.Item(MenuItem("Quit", "")) { navigator.pop() })
-        })
-        return listWindow.render(entries)
+        }
+
+        return context.listView(
+            getEntries = { entries },
+            renderItem = { item, focused ->
+                val label = text("  ${item.label.padEnd(20)} ")
+                val desc  = text(item.description).dim()
+                if (focused) hbox(label, desc).inverted() else hbox(label, desc)
+            },
+            renderHeader = { item ->
+                hbox(text("  ─── ${item.label} ───").bold(), filler())
+            },
+            toSearchString = { it.label }
+        )
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -181,8 +180,8 @@ class FruitListViewModel : ViewModel<FruitListState, FruitListEvent>() {
     }
 }
 
-class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
-    override val viewModel = FruitListViewModel()
+class FruitListScreen : Screen() {
+    val viewModel = FruitListViewModel()
 
     override val globalShortcuts = listOf(
         Shortcut(Key.CtrlN, "^N  Add", description = "Add a random item to the list") {
@@ -192,35 +191,24 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
 
     private lateinit var navigator: Navigator
 
-    private val listWindow = ListView<Fruit>(
-        renderItem = { fruit, focused ->
-            if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
-            else hbox(text("   "), text(fruit.name))
-        },
-        renderHeader = { fruit ->
-            hbox(text(" ── ${fruit.name} ──").bold(), filler())
-        },
-        toSearchString = { it.name },
-    )
-
-    @Volatile private var listComponent: Component? = null
-
-    init {
+    override fun buildContent(context: ScreenContext): Component {
+        this.navigator = context.navigator
         GlobalScope.launch {
             viewModel.state.collect { state ->
-                listComponent ?: return@collect
-                listWindow.updateState(buildListState(state))
+                context.requestRedraw()
             }
         }
-    }
-
-    override val activeWindow get() = listWindow
-
-    override fun buildContent(state: FruitListState): Component {
-        val ls = buildListState(state)
-        val lc = listWindow.render(ls)
-        listComponent = lc
-        return lc
+        return context.listView(
+            getEntries = { buildListState(viewModel.state.value) },
+            renderItem = { fruit, focused ->
+                if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
+                else hbox(text("   "), text(fruit.name))
+            },
+            renderHeader = { fruit ->
+                hbox(text(" ── ${fruit.name} ──").bold(), filler())
+            },
+            toSearchString = { it.name }
+        )
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -228,15 +216,15 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
         return super.handleInput(event, navigator)
     }
 
-    private fun buildListState(state: FruitListState): ListState<Fruit> {
+    private fun buildListState(state: FruitListState): List<ListEntry<Fruit>> {
         val fruits = state.fruits.filter { it.category == "Fruit" }
         val vegs   = state.fruits.filter { it.category == "Vegetable" }
-        return ListState(buildList {
+        return buildList {
             add(ListEntry.Header(Fruit("Fruits", "")))
             fruits.forEach { f -> add(ListEntry.Item(f) { navigator.push(DetailScreen(f)) }) }
             add(ListEntry.Header(Fruit("Vegetables", "")))
             vegs.forEach { v -> add(ListEntry.Item(v) { navigator.push(DetailScreen(v)) }) }
-        })
+        }
     }
 }
 
@@ -244,40 +232,35 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
 // Screen — Detail view
 // =============================================================================
 
-data class DetailState(val entries: ListState<String>)
-
-class DetailScreen(fruit: Fruit) : Screen<DetailState, Nothing>() {
-    override val viewModel = object : ViewModel<DetailState, Nothing>() {
-        override val state = MutableStateFlow(
-            DetailState(
-                ListState(buildList {
-                    add(ListEntry.Header(fruit.name))
-                    add(ListEntry.Item("Category   : ${fruit.category}"))
-                    add(ListEntry.Item("Length     : ${fruit.name.length} characters"))
-                    add(ListEntry.Item("Upper-case : ${fruit.name.uppercase()}"))
-                    add(ListEntry.Item("Lower-case : ${fruit.name.lowercase()}"))
-                    add(ListEntry.Item("First char : '${fruit.name.first()}'"))
-                    add(ListEntry.Item("Last char  : '${fruit.name.last()}'"))
-                })
-            )
-        )
-        override fun onEvent(event: Nothing) {}
+class DetailScreen(fruit: Fruit) : Screen() {
+    private val entries = buildList {
+        add(ListEntry.Header(fruit.name))
+        add(ListEntry.Item("Category   : ${fruit.category}"))
+        add(ListEntry.Item("Length     : ${fruit.name.length} characters"))
+        add(ListEntry.Item("Upper-case : ${fruit.name.uppercase()}"))
+        add(ListEntry.Item("Lower-case : ${fruit.name.lowercase()}"))
+        add(ListEntry.Item("First char : '${fruit.name.first()}'"))
+        add(ListEntry.Item("Last char  : '${fruit.name.last()}'"))
     }
 
-    private lateinit var navigator: Navigator
+    private var navigator: Navigator? = null
+    private lateinit var listComponent: Component
+
+    override val activeWindow get() = listComponent
 
     override val globalShortcuts get() = listOf(
-        Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator.pop() },
+        Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator?.pop() },
     )
 
-    private val listWindow = ListView<String>(
-        renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
-        renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) },
-    )
-
-    override val activeWindow get() = listWindow
-
-    override fun buildContent(state: DetailState): Component = listWindow.render(state.entries)
+    override fun buildContent(context: ScreenContext): Component {
+        this.navigator = context.navigator
+        listComponent = context.listView(
+            getEntries = { entries },
+            renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
+            renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
+        )
+        return listComponent
+    }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator
@@ -289,17 +272,15 @@ class DetailScreen(fruit: Fruit) : Screen<DetailState, Nothing>() {
 // Screen — Pager demo
 // =============================================================================
 
-class PagerDemoScreen : Screen<PagerState, Nothing>() {
-    override val viewModel = object : ViewModel<PagerState, Nothing>() {
+class PagerDemoScreen : Screen() {
+    val viewModel = object : ViewModel<PagerState, Nothing>() {
         override val state = MutableStateFlow(PagerState(DEMO_LINES, showLineNumbers = true))
         override fun onEvent(event: Nothing) {}
     }
 
-    private val pager = PagerView()
-
-    override val activeWindow get() = pager
-
-    override fun buildContent(state: PagerState): Component = pager.render(state)
+    override fun buildContent(context: ScreenContext): Component = context.pagerView(
+        getState = { viewModel.state.value }
+    )
 
     companion object {
         val DEMO_LINES = """
@@ -378,7 +359,7 @@ class PagerDemoScreen : Screen<PagerState, Nothing>() {
             - SplitWindow currently supports exactly two panels. An N-panel split
               (with configurable weights) is planned.
             - PagerWindow search uses substring matching. Regex support is planned.
-            - The command palette only surfaces Screen-level global shortcuts. Window-
+              - The command palette only surfaces Screen-level global shortcuts. Window-
               level shortcuts (e.g., / for search, j/k for navigation) are intentionally
               excluded because they are context-sensitive and always active.
         """.trimIndent().lines()
@@ -391,8 +372,8 @@ class PagerDemoScreen : Screen<PagerState, Nothing>() {
 
 data class SplitDemoState(val fruits: List<Fruit>, val vegetables: List<Fruit>)
 
-class SplitDemoScreen : Screen<SplitDemoState, Nothing>() {
-    override val viewModel = object : ViewModel<SplitDemoState, Nothing>() {
+class SplitDemoScreen : Screen() {
+    val viewModel = object : ViewModel<SplitDemoState, Nothing>() {
         override val state = MutableStateFlow(
             SplitDemoState(
                 fruits = listOf(
@@ -408,30 +389,30 @@ class SplitDemoScreen : Screen<SplitDemoState, Nothing>() {
         override fun onEvent(event: Nothing) {}
     }
 
-    private val leftWindow = ListView<Fruit>(
-        renderItem   = { fruit, focused ->
-            if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
-            else hbox(text("   "), text(fruit.name))
-        },
-        renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
-    )
+    override fun buildContent(context: ScreenContext): Component {
+        val state = viewModel.state.value
+        val leftEntries = state.fruits.map { ListEntry.Item(it) }
+        val rightEntries = state.vegetables.map { ListEntry.Item(it) }
 
-    private val rightWindow = ListView<Fruit>(
-        renderItem   = { fruit, focused ->
-            if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
-            else hbox(text("   "), text(fruit.name))
-        },
-        renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
-    )
+        val leftList = context.listView(
+            getEntries = { leftEntries },
+            renderItem = { fruit, focused ->
+                if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
+                else hbox(text("   "), text(fruit.name))
+            },
+            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
+        )
 
-    private val split = SplitView(leftWindow, rightWindow, leftTitle = "Fruits", rightTitle = "Vegetables")
+        val rightList = context.listView(
+            getEntries = { rightEntries },
+            renderItem = { fruit, focused ->
+                if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
+                else hbox(text("   "), text(fruit.name))
+            },
+            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
+        )
 
-    override val activeWindow get() = split
-
-    override fun buildContent(state: SplitDemoState): Component {
-        val leftState  = ListState(state.fruits.map { ListEntry.Item(it) })
-        val rightState = ListState(state.vegetables.map { ListEntry.Item(it) })
-        return split.render(leftWindow.render(leftState), rightWindow.render(rightState))
+        return context.splitView(leftList, rightList, leftTitle = "Fruits", rightTitle = "Vegetables")
     }
 }
 
@@ -467,30 +448,16 @@ class AsyncDemoViewModel : AsyncViewModel<FruitReport, AsyncDemoEvent>() {
 class AsyncDemoScreen : AsyncScreen<FruitReport, AsyncDemoEvent>() {
     override val viewModel = AsyncDemoViewModel()
 
-    private lateinit var navigator: Navigator
-
-    override val globalShortcuts get() = listOf(
-        Shortcut(Key.CtrlR, "^R  Retry", description = "Re-run the async load") {
-            viewModel.onEvent(AsyncDemoEvent.Retry)
-        },
-    )
-
-    private val listWindow = ListView<String>(
-        renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
-        renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) },
-    )
-
-    override fun buildLoaded(data: FruitReport): Component {
-        val entries = ListState(buildList {
+    override fun ScreenContext.buildLoaded(data: FruitReport): Component {
+        val entries = buildList {
             add(ListEntry.Header("Loaded in ${data.loadTimeMs} ms"))
             data.fruits.forEach { add(ListEntry.Item(it.name)) }
-        })
-        return listWindow.render(entries)
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        return super.handleInput(event, navigator)
+        }
+        return listView(
+            getEntries = { entries },
+            renderItem = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
+            renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
+        )
     }
 }
 
@@ -546,8 +513,8 @@ class TreeDemoViewModel : ViewModel<TreeDemoState, TreeDemoEvent>() {
     }
 }
 
-class TreeDemoScreen : Screen<TreeDemoState, TreeDemoEvent>() {
-    override val viewModel = TreeDemoViewModel()
+class TreeDemoScreen : Screen() {
+    val viewModel = TreeDemoViewModel()
 
     override val globalShortcuts get() = listOf(
         Shortcut(Key.CtrlR, "^R  Collapse all", description = "Collapse all top-level nodes") {
@@ -555,27 +522,38 @@ class TreeDemoScreen : Screen<TreeDemoState, TreeDemoEvent>() {
         },
     )
 
-    private val treeWindow = TreeView<String>(
-        renderNode = { label, _, focused, _, _ ->
-            if (focused) text(label).inverted() else text(label)
+    private lateinit var navigator: Navigator
+
+    override fun buildContent(context: ScreenContext): Component {
+        this.navigator = context.navigator
+        GlobalScope.launch {
+            viewModel.state.collect {
+                context.requestRedraw()
+            }
         }
-    )
+        return context.treeView(
+            getState = { TreeState(withCallbacks(viewModel.state.value.roots, emptyList())) },
+            renderNode = { label, _, focused, _, _ ->
+                if (focused) text(label).inverted() else text(label)
+            }
+        )
+    }
 
-    override val activeWindow get() = treeWindow
-
-    override fun buildContent(state: TreeDemoState): Component =
-        treeWindow.render(withCallbacks(state.roots, emptyList()))
-
-    private fun withCallbacks(nodes: StringTree, prefix: List<Int>): TreeState<String> =
-        TreeState(nodes.mapIndexed { i, node ->
+    private fun withCallbacks(nodes: StringTree, prefix: List<Int>): StringTree =
+        nodes.mapIndexed { i, node ->
             val path = prefix + i
             node.copy(
                 onToggle  = if (node.children.isNotEmpty()) {
                     { viewModel.onEvent(TreeDemoEvent.Toggle(path)) }
                 } else null,
-                children  = withCallbacks(node.children, path).roots,
+                children  = withCallbacks(node.children, path),
             )
-        })
+        }
+
+    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
+        this.navigator = navigator
+        return super.handleInput(event, navigator)
+    }
 }
 
 // =============================================================================
@@ -584,53 +562,49 @@ class TreeDemoScreen : Screen<TreeDemoState, TreeDemoEvent>() {
 
 data class FruitRow(val name: String, val category: String, val length: Int)
 
-class TableDemoScreen : Screen<Unit, Nothing>() {
-    override val viewModel = object : ViewModel<Unit, Nothing>() {
+class TableDemoScreen : Screen() {
+    val viewModel = object : ViewModel<Unit, Nothing>() {
         override val state = MutableStateFlow(Unit)
         override fun onEvent(event: Nothing) {}
     }
 
     private lateinit var navigator: Navigator
 
-    private val tableWindow = TableView<FruitRow>(
-        columns = listOf(
-            TableColumn("Name", extract = { it.name }),
-            TableColumn(
-                header = "Category",
-                extract = { it.category },
-                renderHeader = { text, width -> text(text.padEnd(width + 3)).bold().underlined() },
-                renderCell = { item, width, focused ->
-                    val color = if (item.category == "Fruit") Color.Green else Color.Yellow
-                    val el = text(item.category.padEnd(width + 3)).color(color)
-                    if (focused) el.inverted() else el
-                },
-            ),
-            TableColumn(
-                header = "Length",
-                extract = { it.length.toString() },
-                renderCell = { item, width, focused ->
-                    val bar = "█".repeat(item.length) + " ".repeat((width - item.length).coerceAtLeast(0) + 3)
-                    val el = text(bar).color(Color.Blue)
-                    if (focused) el.inverted() else el
-                },
-            ),
-        ),
-        onEnter = { row ->
-            Logger.info("Selected: ${row.name} (${row.category})")
-        },
-    )
-
-    init {
-        tableWindow.updateState(TableState(FRUIT_ROWS))
-    }
-
-    override val activeWindow get() = tableWindow
-
     override val globalShortcuts get() = listOf(
         Shortcut(Key.CtrlB, "^B  Back", description = "Return to home") { navigator.pop() },
     )
 
-    override fun buildContent(state: Unit): Component = tableWindow.render(TableState(FRUIT_ROWS))
+    override fun buildContent(context: ScreenContext): Component {
+        this.navigator = context.navigator
+        return context.tableView(
+            getRows = { FRUIT_ROWS },
+            columns = listOf(
+                TableColumn("Name", extract = { it.name }),
+                TableColumn(
+                    header = "Category",
+                    extract = { it.category },
+                    renderHeader = { text, width -> text(text.padEnd(width + 3)).bold().underlined() },
+                    renderCell = { item, width, focused ->
+                        val color = if (item.category == "Fruit") Color.Green else Color.Yellow
+                        val el = text(item.category.padEnd(width + 3)).color(color)
+                        if (focused) el.inverted() else el
+                    },
+                ),
+                TableColumn(
+                    header = "Length",
+                    extract = { it.length.toString() },
+                    renderCell = { item, width, focused ->
+                        val bar = "█".repeat(item.length) + " ".repeat((width - item.length).coerceAtLeast(0) + 3)
+                        val el = text(bar).color(Color.Blue)
+                        if (focused) el.inverted() else el
+                    },
+                ),
+            ),
+            onEnter = { row ->
+                Logger.info("Selected: ${row.name} (${row.category})")
+            }
+        )
+    }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator

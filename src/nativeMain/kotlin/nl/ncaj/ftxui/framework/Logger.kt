@@ -1,7 +1,7 @@
 package nl.ncaj.ftxui.framework
 
-import kotlin.concurrent.Volatile
 import platform.posix.time
+import kotlin.concurrent.Volatile
 
 object Logger {
     enum class Level { Debug, Info, Warn, Error }
