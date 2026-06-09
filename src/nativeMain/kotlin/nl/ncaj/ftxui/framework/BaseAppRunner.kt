@@ -12,16 +12,8 @@ internal abstract class BaseAppRunner(
 ) {
     protected val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    @Volatile protected var logPanelOpen: Boolean = false
-    @Volatile protected var logPanelProgress: Float = 0f
-    @Volatile protected var logPanelAnimJob: Job? = null
-    @Volatile protected var logScrollOffset: Int = Int.MAX_VALUE
-    @Volatile protected var logMinLevel: Logger.Level? = null
-
-    @Volatile protected var notifPanelOpen: Boolean = false
-    @Volatile protected var notifPanelProgress: Float = 0f
-    @Volatile protected var notifPanelAnimJob: Job? = null
-    @Volatile protected var notifLogScroll: Int = 0
+    private val logPanel = LogPanelView(scope) { app.requestAnimationFrame() }
+    private val notifPanel = NotificationPanelView(scope, { app.requestAnimationFrame() }) { activeNotificationLog() }
 
     @Volatile protected var showHelp: Boolean = false
     @Volatile protected var showPalette: Boolean = false
@@ -53,14 +45,14 @@ internal abstract class BaseAppRunner(
             var el = buildContentElement()
             buildActiveToastsElement()?.let { el = dbox(el, it) }
             val anyModal = isDialogActive() || showHelp || showPalette ||
-                logPanelProgress > 0f || notifPanelProgress > 0f || confirmingQuit
+                logPanel.progress > 0f || notifPanel.progress > 0f || confirmingQuit
             if (anyModal) el = el.dim()
             buildActiveDialogElement()?.let { el = dbox(el, it) }
             if (confirmingQuit) el = dbox(el, buildConfirmQuitElement())
             if (showHelp) el = dbox(el, buildHelpElement())
             if (showPalette) el = dbox(el, buildPaletteElement())
-            if (notifPanelProgress > 0f) el = dbox(el, buildNotificationLogElement())
-            if (logPanelProgress > 0f) el = dbox(el, buildLogElement())
+            notifPanel.buildElement()?.let { el = dbox(el, it) }
+            logPanel.buildElement()?.let { el = dbox(el, it) }
             if (showPerfOverlay) el = dbox(el, buildPerfOverlayElement())
             el
         }.catchEvent { event ->
@@ -71,8 +63,8 @@ internal abstract class BaseAppRunner(
     private fun handleEvent(event: FtxUIEvent): Boolean {
         return when {
             isDialogActive() -> handleActiveDialogInput(event)
-            logPanelOpen -> handleLogPanelInput(event)
-            notifPanelOpen -> handleNotificationLogInput(event)
+            logPanel.isOpen -> logPanel.handleInput(event)
+            notifPanel.isOpen -> notifPanel.handleInput(event)
             showPalette -> handlePaletteInput(event)
             showHelp -> {
                 if (event.isKey(Key.Escape) || event.isKey(Key.Return) || isChar(event, "?")) {
@@ -107,9 +99,9 @@ internal abstract class BaseAppRunner(
                         showPalette = true; paletteQuery = ""; paletteCursor = 0
                         app.requestAnimationFrame(); true
                     }
-                    !handled && event.isKey(Key.CtrlN) -> { openNotificationPanel(); true }
+                    !handled && event.isKey(Key.CtrlN) -> { notifPanel.open(); true }
                     !handled && event.isKey(Key.CtrlL) -> {
-                        if (logPanelOpen) closeLogPanel() else openLogPanel(); true
+                        if (logPanel.isOpen) logPanel.close() else logPanel.open(); true
                     }
                     else -> handled
                 }
@@ -125,122 +117,6 @@ internal abstract class BaseAppRunner(
             avgFrameMs = avgFrameMs * 0.9f + ms * 0.1f
         }
         lastFrameMark = now
-    }
-
-    private fun filteredLogEntries(): List<Logger.Entry> {
-        val min = logMinLevel ?: return Logger.entries()
-        return Logger.entries().filter { it.level >= min }
-    }
-
-    protected fun openLogPanel() {
-        logPanelOpen = true
-        logScrollOffset = Int.MAX_VALUE
-        logPanelAnimJob?.cancel()
-        logPanelAnimJob = scope.launch {
-            val start = TimeSource.Monotonic.markNow()
-            val duration = 180.milliseconds
-            while (logPanelProgress < 1f) {
-                delay(16.milliseconds)
-                logPanelProgress = (start.elapsedNow() / duration).toFloat().coerceIn(0f, 1f)
-                app.requestAnimationFrame()
-            }
-        }
-    }
-
-    protected fun closeLogPanel() {
-        logPanelOpen = false
-        logPanelAnimJob?.cancel()
-        logPanelAnimJob = scope.launch {
-            val start = TimeSource.Monotonic.markNow()
-            val startProgress = logPanelProgress
-            val duration = 130.milliseconds
-            while (logPanelProgress > 0f) {
-                delay(16.milliseconds)
-                val t = (start.elapsedNow() / duration).toFloat().coerceIn(0f, 1f)
-                logPanelProgress = (startProgress * (1f - t)).coerceAtLeast(0f)
-                app.requestAnimationFrame()
-            }
-        }
-    }
-
-    private fun handleLogPanelInput(event: FtxUIEvent): Boolean {
-        val entries = filteredLogEntries()
-        val termH = Terminal.size().dimy
-        val targetH = (termH * 0.45f).toInt().coerceAtLeast(8)
-        val visH = maxOf(1, targetH - 4)
-        val maxScroll = maxOf(0, entries.size - visH)
-        logScrollOffset = logScrollOffset.coerceIn(0, maxScroll)
-        when {
-            event.isKey(Key.Escape) || event.isKey(Key.CtrlL) -> closeLogPanel()
-            event.isKey(Key.ArrowDown) || isChar(event, "j") ->
-                logScrollOffset = (logScrollOffset + 1).coerceAtMost(maxScroll)
-            event.isKey(Key.ArrowUp) || isChar(event, "k") ->
-                logScrollOffset = (logScrollOffset - 1).coerceAtLeast(0)
-            isChar(event, "G") -> logScrollOffset = maxScroll
-            isChar(event, "g") -> logScrollOffset = 0
-            event.isKey(Key.CtrlD) -> logScrollOffset = (logScrollOffset + visH / 2).coerceAtMost(maxScroll)
-            event.isKey(Key.CtrlU) -> logScrollOffset = (logScrollOffset - visH / 2).coerceAtLeast(0)
-            isChar(event, "f") -> {
-                logMinLevel = when (logMinLevel) {
-                    null               -> Logger.Level.Info
-                    Logger.Level.Info  -> Logger.Level.Warn
-                    Logger.Level.Warn  -> Logger.Level.Error
-                    Logger.Level.Error -> null
-                    else               -> null
-                }
-                logScrollOffset = Int.MAX_VALUE
-            }
-        }
-        app.requestAnimationFrame()
-        return true
-    }
-
-    protected fun openNotificationPanel() {
-        notifPanelOpen = true
-        notifLogScroll = 0
-        notifPanelAnimJob?.cancel()
-        notifPanelAnimJob = scope.launch {
-            val start = TimeSource.Monotonic.markNow()
-            val duration = 180.milliseconds
-            while (notifPanelProgress < 1f) {
-                delay(16.milliseconds)
-                notifPanelProgress = (start.elapsedNow() / duration).toFloat().coerceIn(0f, 1f)
-                app.requestAnimationFrame()
-            }
-        }
-    }
-
-    protected fun closeNotificationPanel() {
-        notifPanelOpen = false
-        notifPanelAnimJob?.cancel()
-        notifPanelAnimJob = scope.launch {
-            val start = TimeSource.Monotonic.markNow()
-            val startProgress = notifPanelProgress
-            val duration = 130.milliseconds
-            while (notifPanelProgress > 0f) {
-                delay(16.milliseconds)
-                val t = (start.elapsedNow() / duration).toFloat().coerceIn(0f, 1f)
-                notifPanelProgress = (startProgress * (1f - t)).coerceAtLeast(0f)
-                app.requestAnimationFrame()
-            }
-        }
-    }
-
-    private fun handleNotificationLogInput(event: FtxUIEvent): Boolean {
-        val log = activeNotificationLog()
-        val visH = maxOf(1, Terminal.size().dimy - 6)
-        val maxScroll = maxOf(0, log.size - visH)
-        when {
-            event.isKey(Key.Escape) || event.isKey(Key.CtrlN) -> closeNotificationPanel()
-            event.isKey(Key.ArrowDown) || isChar(event, "j") ->
-                notifLogScroll = (notifLogScroll + 1).coerceAtMost(maxScroll)
-            event.isKey(Key.ArrowUp) || isChar(event, "k") ->
-                notifLogScroll = (notifLogScroll - 1).coerceAtLeast(0)
-            isChar(event, "G") -> notifLogScroll = maxScroll
-            isChar(event, "g") -> notifLogScroll = 0
-        }
-        app.requestAnimationFrame()
-        return true
     }
 
     private fun paletteItems(): List<Shortcut> {
@@ -348,89 +224,6 @@ internal abstract class BaseAppRunner(
         return body.window(text(" Keyboard Shortcuts ").bold()).clearUnder().hcenter().vcenter()
     }
 
-    private fun buildLogElement(): Element {
-        val entries = filteredLogEntries()
-        val allCount = Logger.entries().size
-        val termH = Terminal.size().dimy
-        val targetH = (termH * 0.45f).toInt().coerceAtLeast(8)
-        val currentH = (targetH * logPanelProgress).toInt()
-        if (currentH < 2) return filler()
-        val visH = maxOf(1, currentH - 4)
-        val maxScroll = maxOf(0, entries.size - visH)
-        val scroll = logScrollOffset.coerceIn(0, maxScroll)
-        val slice = entries.drop(scroll).take(visH)
-        val rows: List<Element> = if (entries.isEmpty()) {
-            listOf(hbox(text("  "), text("No log entries").dim(), text("  ")))
-        } else {
-            slice.map { entry ->
-                val (icon, color) = when (entry.level) {
-                    Logger.Level.Debug -> "·" to Color.GrayLight
-                    Logger.Level.Info  -> "ℹ" to Theme.current.info
-                    Logger.Level.Warn  -> "⚠" to Theme.current.warning
-                    Logger.Level.Error -> "✗" to Theme.current.error
-                }
-                hbox(text("  ${entry.time} ").dim(), text("$icon ").color(color), text(entry.message), text("  "))
-            }
-        }
-        val scrollBar = vScrollBar(scroll, entries.size, rows.size)
-        val content = hbox(vbox(*rows.toTypedArray()).flex(), scrollBar)
-        val filterLabel = when (logMinLevel) {
-            null               -> "all"
-            Logger.Level.Info  -> "≥info"
-            Logger.Level.Warn  -> "≥warn"
-            Logger.Level.Error -> "error"
-            else               -> ""
-        }
-        val titleCount = if (logMinLevel == null) "${entries.size}" else "${entries.size}/${allCount}"
-        val header = hbox(
-            text("  "),
-            text("Logs").color(Theme.current.accent).bold(),
-            text(" [$titleCount]${if (filterLabel.isNotEmpty()) "  $filterLabel" else ""}").color(Theme.current.accent),
-            filler(),
-        )
-        val hint = hbox(text("  "), text("j/k scroll  g/G top/bottom  f filter  Esc/^L close").dim(), text("  "))
-        val body = vbox(header, separator(), content, separator(), hint, text(""))
-        return vbox(filler(), body.borderStyled(BorderStyle.Heavy, Theme.current.accent).clearUnder().size(WidthOrHeight.Height, Constraint.Equal, currentH).xflex())
-    }
-
-    private fun buildNotificationLogElement(): Element {
-        val termW = Terminal.size().dimx
-        val termH = Terminal.size().dimy
-        val targetWidth = (termW * 0.38f).toInt().coerceIn(42, 90)
-        val currentWidth = (targetWidth * notifPanelProgress).toInt()
-        if (currentWidth < 3) return filler()
-        val log = activeNotificationLog()
-        val visH = maxOf(1, termH - 4)
-        val maxScroll = maxOf(0, log.size - visH)
-        val scroll = notifLogScroll.coerceIn(0, maxScroll)
-        val slice = log.drop(scroll).take(visH)
-        val rows: List<Element> = if (log.isEmpty()) {
-            listOf(hbox(text("  "), text("No notifications yet").dim(), text("  ")))
-        } else {
-            slice.map { record ->
-                val (icon, color) = notifStyle(record.type)
-                hbox(text("  ${record.timestamp} ").dim(), text("$icon  ").color(color), text(record.message), text("  "))
-            }
-        }
-        val scrollBar = vScrollBar(scroll, log.size, rows.size)
-        val content = hbox(vbox(*rows.toTypedArray()).flex(), scrollBar)
-        val hint = hbox(text("  "), text("j/k scroll  Esc/^N close").dim(), text("  "))
-        val header = hbox(
-            text("  "),
-            text("Notifications").color(Theme.current.accent).bold(),
-            text(" [${log.size}]").color(Theme.current.accent),
-            filler(),
-        )
-        val body = vbox(header, separator(), content, separator(), hint, text(""))
-        return hbox(
-            filler(),
-            body.borderStyled(BorderStyle.Heavy, Theme.current.accent)
-                .clearUnder()
-                .size(WidthOrHeight.Width, Constraint.Equal, currentWidth)
-                .yflex(),
-        )
-    }
-
     private fun buildPerfOverlayElement(): Element {
         val fps = if (avgFrameMs > 0) (1000f / avgFrameMs).toInt() else 0
         val termSize = Terminal.size()
@@ -443,14 +236,6 @@ internal abstract class BaseAppRunner(
         }
         val body = vbox(*lines.map { hbox(text("  $it  ")) }.toTypedArray())
         return hbox(filler(), body.window(text(" perf ").dim()).clearUnder(), text(" "))
-    }
-
-
-    private fun notifStyle(type: Toast.Type): Pair<String, Color> = when (type) {
-        Toast.Type.Info    -> "ℹ" to Theme.current.info
-        Toast.Type.Success -> "✓" to Theme.current.success
-        Toast.Type.Warning -> "⚠" to Theme.current.warning
-        Toast.Type.Error   -> "✗" to Theme.current.error
     }
 }
 
