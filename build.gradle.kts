@@ -6,6 +6,7 @@ plugins {
 group = "nl.ncaj.ftxui"
 
 repositories {
+    mavenLocal()
     mavenCentral()
 }
 
@@ -40,6 +41,7 @@ kotlin {
         nativeMain {
             dependencies {
                 implementation("nl.ncaj.ftxui:ftxui-kt-dsl:1.2.0")
+                implementation("nl.ncaj.ftxui:ftxui-kt:1.2.4")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }

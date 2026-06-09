@@ -39,7 +39,7 @@ class HomeScreen : Screen<Unit, Nothing>() {
         },
     )
 
-    private val listWindow = object : ListWindow<MenuItem>(
+    private val listWindow = ListView<MenuItem>(
         renderItem = { item, focused ->
             val label = text("  ${item.label.padEnd(20)} ")
             val desc  = text(item.description).dim()
@@ -49,9 +49,7 @@ class HomeScreen : Screen<Unit, Nothing>() {
             hbox(text("  ─── ${item.label} ───").bold(), filler())
         },
         toSearchString = { it.label },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     override val activeWindow get() = listWindow
 
@@ -194,7 +192,7 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
 
     private lateinit var navigator: Navigator
 
-    private val listWindow = object : ListWindow<Fruit>(
+    private val listWindow = ListView<Fruit>(
         renderItem = { fruit, focused ->
             if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
             else hbox(text("   "), text(fruit.name))
@@ -203,9 +201,7 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
             hbox(text(" ── ${fruit.name} ──").bold(), filler())
         },
         toSearchString = { it.name },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     @Volatile private var listComponent: Component? = null
 
@@ -224,7 +220,7 @@ class FruitListScreen : Screen<FruitListState, FruitListEvent>() {
         val ls = buildListState(state)
         val lc = listWindow.render(ls)
         listComponent = lc
-        return renderer { lc.render() }
+        return lc
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -274,12 +270,10 @@ class DetailScreen(fruit: Fruit) : Screen<DetailState, Nothing>() {
         Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator.pop() },
     )
 
-    private val listWindow = object : ListWindow<String>(
+    private val listWindow = ListView<String>(
         renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
         renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     override val activeWindow get() = listWindow
 
@@ -301,9 +295,7 @@ class PagerDemoScreen : Screen<PagerState, Nothing>() {
         override fun onEvent(event: Nothing) {}
     }
 
-    private val pager = object : PagerWindow() {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    private val pager = PagerView()
 
     override val activeWindow get() = pager
 
@@ -416,34 +408,30 @@ class SplitDemoScreen : Screen<SplitDemoState, Nothing>() {
         override fun onEvent(event: Nothing) {}
     }
 
-    private val leftWindow = object : ListWindow<Fruit>(
+    private val leftWindow = ListView<Fruit>(
         renderItem   = { fruit, focused ->
             if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
             else hbox(text("   "), text(fruit.name))
         },
         renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT - 2
-    }
+    )
 
-    private val rightWindow = object : ListWindow<Fruit>(
+    private val rightWindow = ListView<Fruit>(
         renderItem   = { fruit, focused ->
             if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
             else hbox(text("   "), text(fruit.name))
         },
         renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT - 2
-    }
+    )
 
-    private val split = SplitWindow(leftWindow, rightWindow, leftTitle = "Fruits", rightTitle = "Vegetables")
+    private val split = SplitView(leftWindow, rightWindow, leftTitle = "Fruits", rightTitle = "Vegetables")
 
     override val activeWindow get() = split
 
     override fun buildContent(state: SplitDemoState): Component {
         val leftState  = ListState(state.fruits.map { ListEntry.Item(it) })
         val rightState = ListState(state.vegetables.map { ListEntry.Item(it) })
-        return split.render(leftState to rightState)
+        return split.render(leftWindow.render(leftState), rightWindow.render(rightState))
     }
 }
 
@@ -487,12 +475,10 @@ class AsyncDemoScreen : AsyncScreen<FruitReport, AsyncDemoEvent>() {
         },
     )
 
-    private val listWindow = object : ListWindow<String>(
+    private val listWindow = ListView<String>(
         renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
         renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     override fun buildLoaded(data: FruitReport): Component {
         val entries = ListState(buildList {
@@ -569,13 +555,11 @@ class TreeDemoScreen : Screen<TreeDemoState, TreeDemoEvent>() {
         },
     )
 
-    private val treeWindow = object : TreeWindow<String>(
+    private val treeWindow = TreeView<String>(
         renderNode = { label, _, focused, _, _ ->
             if (focused) text(label).inverted() else text(label)
         }
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     override val activeWindow get() = treeWindow
 
@@ -608,7 +592,7 @@ class TableDemoScreen : Screen<Unit, Nothing>() {
 
     private lateinit var navigator: Navigator
 
-    private val tableWindow = object : TableWindow<FruitRow>(
+    private val tableWindow = TableView<FruitRow>(
         columns = listOf(
             TableColumn("Name", extract = { it.name }),
             TableColumn(
@@ -634,9 +618,7 @@ class TableDemoScreen : Screen<Unit, Nothing>() {
         onEnter = { row ->
             Logger.info("Selected: ${row.name} (${row.category})")
         },
-    ) {
-        override fun getVisibleHeight() = Terminal.size().dimy - STATUS_BAR_HEIGHT
-    }
+    )
 
     init {
         tableWindow.updateState(TableState(FRUIT_ROWS))

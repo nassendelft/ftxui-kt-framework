@@ -14,18 +14,23 @@ data class FileEntry(
 data class FilePickerState(
     val initialPath: String = ".",
     val showHidden: Boolean = false,
+    val currentPath: String = "",
+    val selectedIndex: Int = 0,
+    val scrollOffset: Int = 0,
+    val filterQuery: String = "",
+    val filtering: Boolean = false
 )
 
 @OptIn(ExperimentalForeignApi::class)
-open class FilePickerWindow(
+open class FilePickerView(
     initialPath: String = ".",
     val onFileSelected: (String) -> Unit = {},
     showHiddenInitially: Boolean = false,
     val filter: ((FileEntry) -> Boolean)? = null,
     val rowContent: ((entry: FileEntry, focused: Boolean) -> Element)? = null,
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : Window<FilePickerState> {
+    private val onStateChange: ((FilePickerState) -> Unit)? = null,
+    private val keybindings: FilePickerKeybindings = FilePickerKeybindings(),
+) : InputReceiver {
 
     @Volatile private var currentPath: String = resolvePath(initialPath)
     @Volatile private var entries: List<FileEntry> = emptyList()
@@ -39,26 +44,68 @@ open class FilePickerWindow(
         loadEntries()
     }
 
-    override fun getVisibleHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
+    private fun getVisibleHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
+    private fun contentHeight(): Int = getVisibleHeight()
 
-    override fun render(state: FilePickerState): Component = renderer { buildElement() }
+    fun render(state: FilePickerState): Component {
+        val oldPath = currentPath
+        val oldHidden = showHidden
+        if (onStateChange != null) {
+            currentPath = if (state.currentPath.isNotEmpty()) state.currentPath else resolvePath(state.initialPath)
+            selectedIndex = state.selectedIndex
+            scrollOffset = state.scrollOffset
+            showHidden = state.showHidden
+            filterQuery = state.filterQuery
+            filtering = state.filtering
+        }
+        if (currentPath != oldPath || showHidden != oldHidden || entries.isEmpty()) {
+            loadEntries()
+        }
+        return renderer { buildElement() }
+    }
 
     override fun onInput(event: FtxUIEvent): Boolean {
-        if (filtering) return handleFilterInput(event)
-        return handleNormalInput(event)
+        val oldPath = currentPath
+        val oldIndex = selectedIndex
+        val oldScroll = scrollOffset
+        val oldHidden = showHidden
+        val oldFilterQuery = filterQuery
+        val oldFiltering = filtering
+
+        val handled = if (filtering) handleFilterInput(event) else handleNormalInput(event)
+
+        if (handled) {
+            if (currentPath != oldPath || selectedIndex != oldIndex || scrollOffset != oldScroll || showHidden != oldHidden || filterQuery != oldFilterQuery || filtering != oldFiltering) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = FilePickerState(
+            initialPath = currentPath,
+            showHidden = showHidden,
+            currentPath = currentPath,
+            selectedIndex = selectedIndex,
+            scrollOffset = scrollOffset,
+            filterQuery = filterQuery,
+            filtering = filtering
+        )
+        onStateChange?.invoke(newState)
     }
 
     private fun handleNormalInput(event: FtxUIEvent): Boolean = when {
-        event.isKey(Key.ArrowUp) || isChar(event, "k")  -> { moveUp(1); true }
-        event.isKey(Key.ArrowDown) || isChar(event, "j") -> { moveDown(1); true }
-        event.isKey(Key.PageUp)   || event.isKey(Key.CtrlU) -> { moveUp(pageSize()); true }
-        event.isKey(Key.PageDown) || event.isKey(Key.CtrlD) -> { moveDown(pageSize()); true }
-        event.isKey(Key.Home) || isChar(event, "g")  -> { selectedIndex = 0; ensureScrollCoversSelection(); true }
-        event.isKey(Key.End)  || isChar(event, "G")  -> { selectedIndex = visibleEntries().lastIndex; ensureScrollCoversSelection(); true }
-        event.isKey(Key.Return) -> { onEnter(); true }
-        event.isKey(Key.Backspace) || isChar(event, "h") -> { goUp(); true }
-        isChar(event, "/") -> { filtering = true; filterQuery = ""; true }
-        isChar(event, ".") -> { showHidden = !showHidden; loadEntries(); true }
+        event.matches(keybindings.moveUpKeys, keybindings.moveUpChars)  -> { moveUp(1); true }
+        event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
+        event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(pageSize()); true }
+        event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(pageSize()); true }
+        event.matches(keybindings.homeKeys, keybindings.homeChars)  -> { selectedIndex = 0; ensureScrollCoversSelection(); true }
+        event.matches(keybindings.endKeys, keybindings.endChars)  -> { selectedIndex = visibleEntries().lastIndex; ensureScrollCoversSelection(); true }
+        event.matches(keybindings.selectKeys, keybindings.selectChars) -> { onEnter(); true }
+        event.matches(keybindings.goUpKeys, keybindings.goUpChars) -> { goUp(); true }
+        event.matches(keybindings.searchKeys, keybindings.searchChars) -> { filtering = true; filterQuery = ""; true }
+        event.matches(keybindings.toggleHiddenKeys, keybindings.toggleHiddenChars) -> { showHidden = !showHidden; loadEntries(); true }
         else -> false
     }
 
@@ -159,7 +206,7 @@ open class FilePickerWindow(
         } else {
             main
         }
-        return wrapWithDecorations(content)
+        return content
     }
 
     private fun buildEntryRow(entry: FileEntry, focused: Boolean): Element {

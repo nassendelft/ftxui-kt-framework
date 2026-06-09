@@ -6,12 +6,17 @@ import nl.ncaj.ftxui.*
 data class PagerState(
     val lines: List<String>,
     val showLineNumbers: Boolean = false,
+    val scrollOffset: Int = 0,
+    val searching: Boolean = false,
+    val searchQuery: String = "",
+    val matchLines: List<Int> = emptyList(),
+    val matchIndex: Int = 0
 )
 
-open class PagerWindow(
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : Window<PagerState> {
+open class PagerView(
+    private val onStateChange: ((PagerState) -> Unit)? = null,
+    private val keybindings: PagerKeybindings = PagerKeybindings(),
+) : InputReceiver {
 
     @Volatile private var state: PagerState = PagerState(emptyList())
     @Volatile private var scrollOffset: Int = 0
@@ -20,40 +25,77 @@ open class PagerWindow(
     @Volatile private var matchLines: List<Int> = emptyList()
     @Volatile private var matchIndex: Int = 0
 
-    open override fun getVisibleHeight(): Int = Terminal.size().dimy
-
     fun updateState(newState: PagerState) {
         state = newState
-        recomputeMatches()
+        if (onStateChange != null) {
+            scrollOffset = newState.scrollOffset
+            searching = newState.searching
+            searchQuery = newState.searchQuery
+            matchLines = newState.matchLines
+            matchIndex = newState.matchIndex
+        } else {
+            recomputeMatches()
+        }
         clampScroll()
     }
 
-    override fun render(state: PagerState): Component {
+    fun render(state: PagerState): Component {
         this.state = state
+        if (onStateChange != null) {
+            this.scrollOffset = state.scrollOffset
+            this.searching = state.searching
+            this.searchQuery = state.searchQuery
+            this.matchLines = state.matchLines
+            this.matchIndex = state.matchIndex
+        }
         return renderer { buildElement() }
     }
 
     override fun onInput(event: FtxUIEvent): Boolean {
-        if (searching) return handleSearchInput(event)
-        return handleNormalInput(event)
+        val oldScroll = scrollOffset
+        val oldSearching = searching
+        val oldQuery = searchQuery
+        val oldMatchIndex = matchIndex
+
+        val handled = if (searching) handleSearchInput(event) else handleNormalInput(event)
+
+        if (handled) {
+            if (scrollOffset != oldScroll || searching != oldSearching || searchQuery != oldQuery || matchIndex != oldMatchIndex) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = PagerState(
+            lines = state.lines,
+            showLineNumbers = state.showLineNumbers,
+            scrollOffset = scrollOffset,
+            searching = searching,
+            searchQuery = searchQuery,
+            matchLines = matchLines,
+            matchIndex = matchIndex
+        )
+        onStateChange?.invoke(newState)
     }
 
     private fun handleNormalInput(event: FtxUIEvent): Boolean = when {
-        event.isKey(Key.ArrowUp)   || isChar(event, "k")   -> { scroll(-1); true }
-        event.isKey(Key.ArrowDown) || isChar(event, "j")   -> { scroll(+1); true }
-        event.isKey(Key.PageUp)    || event.isKey(Key.CtrlU) -> { scroll(-pageSize()); true }
-        event.isKey(Key.PageDown)  || event.isKey(Key.CtrlD) -> { scroll(+pageSize()); true }
-        event.isKey(Key.Home)      || isChar(event, "g")   -> { scrollOffset = 0; true }
-        event.isKey(Key.End)       || isChar(event, "G")   -> { scrollOffset = maxScroll(); true }
-        isChar(event, "/") -> {
+        event.matches(keybindings.scrollUpKeys, keybindings.scrollUpChars)   -> { scroll(-1); true }
+        event.matches(keybindings.scrollDownKeys, keybindings.scrollDownChars) -> { scroll(+1); true }
+        event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { scroll(-pageSize()); true }
+        event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { scroll(+pageSize()); true }
+        event.matches(keybindings.homeKeys, keybindings.homeChars)   -> { scrollOffset = 0; true }
+        event.matches(keybindings.endKeys, keybindings.endChars)   -> { scrollOffset = maxScroll(); true }
+        event.matches(keybindings.searchKeys, keybindings.searchChars) -> {
             searching = true
             searchQuery = ""
             matchLines = emptyList()
             matchIndex = 0
             true
         }
-        isChar(event, "n") && matchLines.isNotEmpty() -> { stepMatch(+1); true }
-        isChar(event, "N") && matchLines.isNotEmpty() -> { stepMatch(-1); true }
+        event.matches(keybindings.nextMatchKeys, keybindings.nextMatchChars) && matchLines.isNotEmpty() -> { stepMatch(+1); true }
+        event.matches(keybindings.prevMatchKeys, keybindings.prevMatchChars) && matchLines.isNotEmpty() -> { stepMatch(-1); true }
         else -> false
     }
 
@@ -80,7 +122,7 @@ open class PagerWindow(
     private fun buildElement(): Element {
         val lines = state.lines
         val hasSearch = searching || searchQuery.isNotEmpty()
-        val contentH = if (hasSearch) maxOf(1, contentHeight() - 2) else contentHeight()
+        val contentH = if (hasSearch) maxOf(1, getContentHeight() - 2) else getContentHeight()
         clampScroll()
 
         val lineNumWidth = if (state.showLineNumbers) lines.size.toString().length else 0
@@ -105,7 +147,7 @@ open class PagerWindow(
             vScrollBar(scrollOffset, lines.size, contentH),
         )
 
-        if (!hasSearch) return wrapWithDecorations(contentEl)
+        if (!hasSearch) return contentEl
 
         val matchStatus = when {
             searchQuery.isEmpty()    -> ""
@@ -117,7 +159,7 @@ open class PagerWindow(
             if (searching) text(queryText) else text(queryText).dim(),
             text(matchStatus).dim(),
         )
-        return wrapWithDecorations(vbox(contentEl, separator(), searchEl))
+        return vbox(contentEl, separator(), searchEl)
     }
 
     private fun buildHighlightedLine(line: String, query: String): Element {
@@ -149,7 +191,7 @@ open class PagerWindow(
 
     private fun scrollToMatch(idx: Int) {
         val line = matchLines.getOrNull(idx) ?: return
-        val h = contentHeight()
+        val h = getContentHeight()
         if (line < scrollOffset || line >= scrollOffset + h) {
             scrollOffset = (line - h / 2).coerceIn(0, maxScroll())
         }
@@ -163,6 +205,7 @@ open class PagerWindow(
         scrollOffset = scrollOffset.coerceIn(0, maxScroll())
     }
 
-    private fun pageSize(): Int = maxOf(1, contentHeight() - 2)
-    private fun maxScroll(): Int = maxOf(0, state.lines.size - contentHeight())
+    private fun getContentHeight(): Int = Terminal.size().dimy
+    private fun pageSize(): Int = maxOf(1, getContentHeight() - 2)
+    private fun maxScroll(): Int = maxOf(0, state.lines.size - getContentHeight())
 }

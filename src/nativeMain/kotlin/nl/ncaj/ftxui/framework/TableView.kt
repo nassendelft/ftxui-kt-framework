@@ -10,14 +10,21 @@ data class TableColumn<T>(
     val renderCell: ((item: T, width: Int, focused: Boolean) -> Element)? = null,
 )
 
-data class TableState<T>(val rows: List<T>)
+data class TableState<T>(
+    val rows: List<T>,
+    val focusedRow: Int = 0,
+    val scrollOffset: Int = 0,
+    val sortColumn: Int? = null,
+    val sortAscending: Boolean = true
+)
 
-open class TableWindow<T>(
+open class TableView<T>(
     private val columns: List<TableColumn<T>>,
     private val onEnter: ((T) -> Unit)? = null,
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : Window<TableState<T>> {
+    private val onStateChange: ((TableState<T>) -> Unit)? = null,
+    private val onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
+    private val keybindings: TableKeybindings = TableKeybindings(),
+) : InputReceiver {
 
     @Volatile private var state: TableState<T> = TableState(emptyList())
     @Volatile private var focusedRow: Int = 0
@@ -25,33 +32,73 @@ open class TableWindow<T>(
     @Volatile private var sortColumn: Int? = null
     @Volatile private var sortAscending: Boolean = true
 
-    open override fun getVisibleHeight(): Int = Terminal.size().dimy
-
     fun updateState(newState: TableState<T>) {
         state = newState
+        if (onStateChange != null) {
+            focusedRow = newState.focusedRow
+            scrollOffset = newState.scrollOffset
+            sortColumn = newState.sortColumn
+            sortAscending = newState.sortAscending
+        }
         ensureValidFocus()
+        ensureScrollCoversSelection()
     }
 
-    override fun render(state: TableState<T>): Component {
+    fun render(state: TableState<T>): Component {
         this.state = state
+        if (onStateChange != null) {
+            this.focusedRow = state.focusedRow
+            this.scrollOffset = state.scrollOffset
+            this.sortColumn = state.sortColumn
+            this.sortAscending = state.sortAscending
+        }
+        val prevRow = focusedRow
+        ensureValidFocus()
+        if (onStateChange != null && focusedRow != prevRow) {
+            notifyStateChange()
+        }
         return renderer { buildElement() }
     }
 
     override fun onInput(event: FtxUIEvent): Boolean {
-        return when {
-            event.isKey(Key.ArrowUp)   || isChar(event, "k") -> { moveUp(); true }
-            event.isKey(Key.ArrowDown) || isChar(event, "j") -> { moveDown(); true }
-            isChar(event, "g") || event.isKey(Key.Home)      -> { focusFirst(); true }
-            isChar(event, "G") || event.isKey(Key.End)       -> { focusLast(); true }
-            event.isKey(Key.CtrlD) -> { repeat(pageSize() / 2) { moveDown() }; true }
-            event.isKey(Key.CtrlU) -> { repeat(pageSize() / 2) { moveUp() }; true }
-            event.isKey(Key.Return) && onEnter != null -> {
+        val oldRow = focusedRow
+        val oldScroll = scrollOffset
+        val oldSortCol = sortColumn
+        val oldSortAsc = sortAscending
+
+        val handled = when {
+            event.matches(keybindings.moveUpKeys, keybindings.moveUpChars) -> { moveUp(); true }
+            event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(); true }
+            event.matches(keybindings.homeKeys, keybindings.homeChars) -> { focusFirst(); true }
+            event.matches(keybindings.endKeys, keybindings.endChars) -> { focusLast(); true }
+            event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { repeat(pageSize() / 2) { moveUp() }; true }
+            event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { repeat(pageSize() / 2) { moveDown() }; true }
+            event.matches(keybindings.selectKeys, keybindings.selectChars) && onEnter != null -> {
                 sortedRows().getOrNull(focusedRow)?.let { onEnter.invoke(it) }
                 true
             }
-            isChar(event, "s") -> { cycleSort(); true }
+            event.matches(keybindings.sortKeys, keybindings.sortChars) -> { cycleSort(); true }
             else -> false
         }
+
+        if (handled) {
+            if (focusedRow != oldRow || scrollOffset != oldScroll || sortColumn != oldSortCol || sortAscending != oldSortAsc) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = TableState(
+            rows = state.rows,
+            focusedRow = focusedRow,
+            scrollOffset = scrollOffset,
+            sortColumn = sortColumn,
+            sortAscending = sortAscending
+        )
+        onStateChange?.invoke(newState)
+        onSelectionChanged?.invoke(sortedRows().getOrNull(focusedRow))
     }
 
     private fun buildElement(): Element {
@@ -94,7 +141,7 @@ open class TableWindow<T>(
             vScrollBar(scrollOffset, rows.size, visH),
         )
 
-        return wrapWithDecorations(vbox(headerEl, separator(), dataEl))
+        return vbox(headerEl, separator(), dataEl)
     }
 
     private fun sortedRows(): List<T> {
@@ -149,5 +196,5 @@ open class TableWindow<T>(
     }
 
     private fun maxScroll(total: Int, visH: Int) = maxOf(0, total - visH)
-    private fun pageSize(): Int = maxOf(1, contentHeight() - 2)
+    private fun pageSize(): Int = maxOf(1, Terminal.size().dimy - 2)
 }

@@ -4,7 +4,7 @@ import kotlin.concurrent.Volatile
 import kotlinx.coroutines.*
 import nl.ncaj.ftxui.*
 
-open class PaginatedListWindow<T>(
+open class PaginatedListView<T>(
     private val pageSize: Int = 50,
     private val loadThreshold: Int = 10,
     private val loadPage: suspend (offset: Int, limit: Int) -> List<ListEntry<T>>,
@@ -13,9 +13,8 @@ open class PaginatedListWindow<T>(
     toSearchString: (T) -> String = { it.toString() },
     private val onSelect: ((ListEntry.Item<T>) -> Unit)? = null,
     private val onTotalCount: (() -> Int?)? = null,
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString), Window<Unit> {
+    keybindings: ListKeybindings = ListKeybindings(),
+) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
 
     @Volatile private var items: List<ListEntry<T>> = emptyList()
     @Volatile private var isLoadingMore: Boolean = false
@@ -25,13 +24,9 @@ open class PaginatedListWindow<T>(
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     @Volatile private var loadJob: Job? = null
 
-    override val activeSubWindow: Window<*>? get() = searchWindow
-
     override fun displayItems(): List<ListEntry<T>> = items
 
     override fun onItemActivated(item: ListEntry.Item<T>) { onSelect?.invoke(item) }
-
-    override fun getVisibleHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
 
     override fun moveDown(count: Int) {
         super.moveDown(count)
@@ -43,7 +38,7 @@ open class PaginatedListWindow<T>(
         loadNextPage()
     }
 
-    override fun render(state: Unit): Component = renderer { buildElement() }
+    fun render(state: Unit = Unit): Component = renderer { buildElement() }
 
     override fun onInput(event: FtxUIEvent): Boolean = handleListInput(event)
 
@@ -54,7 +49,7 @@ open class PaginatedListWindow<T>(
     private fun buildElement(): Element {
         val all = displayItems()
         val swComp = buildSearchBar()
-        val visH = contentHeight()
+        val visH = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
         val listH = if (swComp != null) maxOf(1, visH - 2) else visH
         lastListH = listH
 
@@ -70,8 +65,8 @@ open class PaginatedListWindow<T>(
         val rows = slice.mapIndexed { i, entry ->
             @Suppress("UNCHECKED_CAST")
             when (entry) {
-                is ListEntry.Header -> renderHeader(entry.data as T)
-                is ListEntry.Item   -> renderItem(entry.data as T, (start + i) == ensuredFocus)
+                is ListEntry.Header -> renderHeader(entry.data)
+                is ListEntry.Item   -> renderItem(entry.data, (start + i) == ensuredFocus)
             }
         }
 
@@ -92,8 +87,7 @@ open class PaginatedListWindow<T>(
             loadNextPage()
         }
 
-        val content = if (swComp != null) vbox(swComp.render(), separator(), bottomEl) else bottomEl
-        return wrapWithDecorations(content)
+        return if (swComp != null) vbox(swComp.render(), separator(), bottomEl) else bottomEl
     }
 
     private fun buildStatusRow(): Element? {

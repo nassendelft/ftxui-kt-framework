@@ -1,5 +1,6 @@
 package nl.ncaj.ftxui.framework
 
+import kotlin.concurrent.Volatile
 import nl.ncaj.ftxui.*
 
 enum class StepStatus { Pending, Running, Done, Failed, Skipped }
@@ -14,29 +15,63 @@ data class ProgressStep(
 data class StepProgressState(
     val steps: List<ProgressStep>,
     val spinnerTick: Int = 0,
+    val selectedStep: Int = 0,
+    val expandedSteps: Set<Int> = emptySet()
 )
 
-open class StepProgressWindow(
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : Window<StepProgressState> {
+open class StepProgressView(
+    private val onStateChange: ((StepProgressState) -> Unit)? = null,
+    private val keybindings: StepProgressKeybindings = StepProgressKeybindings(),
+) : InputReceiver {
 
     private val spinnerFrames = listOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
     private var expandedSteps: MutableSet<Int> = mutableSetOf()
     private var selectedStep: Int = 0
+    @Volatile private var state: StepProgressState = StepProgressState(emptyList())
 
-    override fun render(state: StepProgressState): Component = renderer {
-        buildElement(state)
+    fun render(state: StepProgressState): Component {
+        this.state = state
+        if (onStateChange != null) {
+            this.selectedStep = state.selectedStep
+            this.expandedSteps = state.expandedSteps.toMutableSet()
+        }
+        return renderer {
+            buildElement(state)
+        }
     }
 
-    override fun onInput(event: FtxUIEvent): Boolean = when {
-        event.isKey(Key.ArrowUp) || isChar(event, "k") -> { moveUp(); true }
-        event.isKey(Key.ArrowDown) || isChar(event, "j") -> { moveDown(0); true }
-        event.isKey(Key.ArrowRight) || isChar(event, "l") -> { expand(selectedStep); true }
-        event.isKey(Key.ArrowLeft)  || isChar(event, "h") -> { collapse(selectedStep); true }
-        isChar(event, " ") -> { toggleExpand(selectedStep); true }
-        else -> false
+    override fun onInput(event: FtxUIEvent): Boolean {
+        val oldSelected = selectedStep
+        val oldExpanded = expandedSteps.toSet()
+        val lastIdx = state.steps.lastIndex
+
+        val handled = when {
+            event.matches(keybindings.moveUpKeys, keybindings.moveUpChars) -> { moveUp(); true }
+            event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(lastIdx); true }
+            event.matches(keybindings.expandKeys, keybindings.expandChars) -> { expand(selectedStep); true }
+            event.matches(keybindings.collapseKeys, keybindings.collapseChars) -> { collapse(selectedStep); true }
+            isChar(event, " ") -> { toggleExpand(selectedStep); true }
+            else -> false
+        }
+
+        if (handled) {
+            selectedStep = selectedStep.coerceIn(0, maxOf(0, lastIdx))
+            if (selectedStep != oldSelected || expandedSteps != oldExpanded) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = StepProgressState(
+            steps = state.steps,
+            spinnerTick = state.spinnerTick,
+            selectedStep = selectedStep,
+            expandedSteps = expandedSteps.toSet()
+        )
+        onStateChange?.invoke(newState)
     }
 
     private fun moveUp() {
@@ -44,8 +79,7 @@ open class StepProgressWindow(
     }
 
     private fun moveDown(lastIdx: Int) {
-        // called with state.steps.lastIndex; we store selected from outside
-        selectedStep++
+        if (selectedStep < lastIdx) selectedStep++
     }
 
     private fun expand(idx: Int) { expandedSteps.add(idx) }
@@ -78,11 +112,11 @@ open class StepProgressWindow(
 
         val overallEl = buildOverallStatus(overallStatus, state.spinnerTick)
 
-        return wrapWithDecorations(vbox(
+        return vbox(
             *rows.toTypedArray(),
             separator(),
             overallEl,
-        ))
+        )
     }
 
     private fun buildStepRow(step: ProgressStep, idx: Int, focused: Boolean, tick: Int): Element {

@@ -18,9 +18,15 @@ class TextEditorDemoScreen : Screen<TextEditorState, Nothing>() {
 
     private lateinit var navigator: Navigator
 
-    private val editorWindow = TextEditorWindow(showLineNumbers = true, onContentChange = { text ->
-        Logger.debug("Editor: ${text.lines().size} lines")
-    })
+    private val editorWindow = TextEditorView(
+        showLineNumbers = true,
+        onContentChange = { text ->
+            Logger.debug("Editor: ${text.lines().size} lines")
+        },
+        onStateChange = { newState ->
+            (viewModel.state as MutableStateFlow).value = newState
+        }
+    )
 
     override val activeWindow get() = editorWindow
 
@@ -32,6 +38,12 @@ class TextEditorDemoScreen : Screen<TextEditorState, Nothing>() {
     )
 
     override fun buildContent(state: TextEditorState): Component = editorWindow.render(state)
+
+    override fun buildStatusBar(state: TextEditorState): Element {
+        val baseStatusBar = super.buildStatusBar(state)
+        val cursorInfo = "  Ln ${state.cursorLine + 1}, Col ${state.cursorCol + 1}  "
+        return hbox(baseStatusBar, filler(), text(cursorInfo).dim())
+    }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
         this.navigator = navigator
@@ -68,7 +80,7 @@ class FilePickerDemoScreen : Screen<FilePickerState, Nothing>() {
 
     private lateinit var navigator: Navigator
 
-    private val picker = FilePickerWindow(
+    private val picker = FilePickerView(
         initialPath = ".",
         onFileSelected = { path ->
             navigator.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
@@ -96,14 +108,14 @@ class DashboardDemoScreen : Screen<Unit, Nothing>() {
         override fun onEvent(event: Nothing) {}
     }
 
-    private val fruitList = ListWindow<String>(
+    private val fruitList = ListView<String>(
         renderItem = { name, focused ->
             if (focused) text("  $name").inverted() else text("  $name")
         },
         renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
     )
 
-    private val vegList = ListWindow<String>(
+    private val vegList = ListView<String>(
         renderItem = { name, focused ->
             if (focused) text("  $name").inverted() else text("  $name")
         },
@@ -120,7 +132,7 @@ class DashboardDemoScreen : Screen<Unit, Nothing>() {
             .map { ListEntry.Item(it) as ListEntry<String> }
     )
 
-    private val pager = PagerWindow()
+    private val pager = PagerView()
     private val pagerState = PagerState(listOf(
         "Dashboard Window", "──────────────────",
         "Four cells in a 2×2 grid.",
@@ -129,7 +141,7 @@ class DashboardDemoScreen : Screen<Unit, Nothing>() {
         "Each cell wraps any Window type.",
     ))
 
-    private val dashboard = DashboardWindow(
+    private val dashboard = DashboardView(
         columns = 2,
         cells = listOf(
             DashboardCell(
@@ -180,7 +192,7 @@ class PaginatedListDemoScreen : Screen<Unit, Nothing>() {
 
     private lateinit var navigator: Navigator
 
-    private val pagedList = PaginatedListWindow<String>(
+    private val pagedList = PaginatedListView<String>(
         pageSize = 25,
         loadThreshold = 5,
         loadPage = { offset, limit ->
@@ -287,7 +299,7 @@ class StepProgressDemoScreen : Screen<StepProgressState, StepDemoEvent>() {
         },
     )
 
-    private val progressWindow = StepProgressWindow()
+    private val progressWindow = StepProgressView()
 
     override val activeWindow get() = progressWindow
 
@@ -303,39 +315,66 @@ class StepProgressDemoScreen : Screen<StepProgressState, StepDemoEvent>() {
 // Screen — Responsive layout demo
 // =============================================================================
 
-class ResponsiveDemoScreen : Screen<Unit, Nothing>() {
-    override val viewModel = object : ViewModel<Unit, Nothing>() {
-        override val state = MutableStateFlow(Unit)
-        override fun onEvent(event: Nothing) {}
+data class ResponsiveDemoState(
+    val listState: ListState<String>,
+    val detailState: PagerState
+)
+
+class ResponsiveDemoViewModel : ViewModel<ResponsiveDemoState, Nothing>() {
+    private val initialItems = (1..10).map { i -> ListEntry.Item("Item $i") as ListEntry<String> }
+
+    private val _state = MutableStateFlow(ResponsiveDemoState(
+        listState = ListState(initialItems, focusedIndex = 0),
+        detailState = PagerState(getDetails("Item 1"))
+    ))
+    override val state: StateFlow<ResponsiveDemoState> = _state
+
+    override fun onEvent(event: Nothing) {}
+
+    fun updateListState(newListState: ListState<String>) {
+        val selectedIndex = newListState.focusedIndex
+        val selectedItem = newListState.entries.getOrNull(selectedIndex) as? ListEntry.Item<String>
+        val itemName = selectedItem?.data ?: "none"
+
+        _state.value = _state.value.copy(
+            listState = newListState,
+            detailState = PagerState(getDetails(itemName))
+        )
     }
 
-    private val leftList = ListWindow<String>(
+    private fun getDetails(itemName: String) = listOf(
+        "Details for $itemName:",
+        "───────────────────────────────",
+        "This is dynamically synced!",
+        "Selected via state hoisting.",
+        "",
+        "Resize terminal to test split.",
+        "≥ 100 columns → split view",
+        "< 100 columns → single list",
+        "",
+        "Width: ${Terminal.size().dimx} columns."
+    )
+}
+
+class ResponsiveDemoScreen : Screen<ResponsiveDemoState, Nothing>() {
+    override val viewModel = ResponsiveDemoViewModel()
+
+    private val leftList = ListView<String>(
         renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
         renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
+        onStateChange = { viewModel.updateListState(it) }
     )
-    private val rightPager = PagerWindow()
-    private val splitView = SplitWindow(leftList, rightPager, "Items", "Details")
+    private val rightPager = PagerView()
+    private val splitView = SplitView(leftList, rightPager, "Items", "Details")
 
-    private val items = ListState(
-        (1..10).map { i -> ListEntry.Item("Item $i") as ListEntry<String> }
-    )
-    private val detail = PagerState(listOf(
-        "Resize your terminal to test responsive layout.",
-        "",
-        "≥ 100 columns → split view (list + pager)",
-        "< 100 columns → single list view",
-        "",
-        "Current width shown in status bar.",
-    ))
+    override val activeWindow: InputReceiver get() = if (Terminal.size().dimx >= 100) splitView else leftList
 
-    override val activeWindow: Window<*> get() = if (Terminal.size().dimx >= 100) splitView else leftList
-
-    override fun buildContent(state: Unit): Component = responsive(breakpoint = 100,
-        narrow = { leftList.render(items) },
-        wide   = { splitView.render(items to detail) },
+    override fun buildContent(state: ResponsiveDemoState): Component = responsive(breakpoint = 100,
+        narrow = { leftList.render(state.listState) },
+        wide   = { splitView.render(leftList.render(state.listState), rightPager.render(state.detailState)) },
     )
 
-    override fun buildStatusBar(state: Unit): Element {
+    override fun buildStatusBar(state: ResponsiveDemoState): Element {
         val w = Terminal.size().dimx
         val mode = if (w >= 100) "wide (split)" else "narrow (single)"
         return hbox(text(" "), text("width: $w  mode: $mode").dim(), filler())

@@ -16,10 +16,16 @@ sealed class ListEntry<out T> {
 // State model
 // ---------------------------------------------------------------------------
 
-data class ListState<T>(val entries: List<ListEntry<T>>)
+data class ListState<T>(
+    val entries: List<ListEntry<T>>,
+    val focusedIndex: Int = -1,
+    val scrollOffset: Int = 0,
+    val searchActive: Boolean = false,
+    val searchQuery: String = ""
+)
 
 // ---------------------------------------------------------------------------
-// SearchWindow — sub-window that owns all search interaction
+// SearchWindow — sub-view that owns all search interaction
 // ---------------------------------------------------------------------------
 
 internal class SearchWindow<T>(
@@ -28,14 +34,14 @@ internal class SearchWindow<T>(
     private val onResultSelected: (entryIndex: Int) -> Unit,
     private val onConfirm: (entryIndex: Int) -> Unit,
     private val onDismiss: () -> Unit,
-) : Window<Unit> {
+) : InputReceiver {
 
     @Volatile var query: String = ""
         private set
     @Volatile private var resultIndices: List<Int> = emptyList()
     @Volatile private var cursor: Int = 0
 
-    override fun render(state: Unit): Component = renderer { hbox(text("/ $query█")) }
+    fun render(): Component = renderer { hbox(text("/ $query█")) }
 
     override fun onInput(event: FtxUIEvent): Boolean {
         when {
@@ -88,16 +94,16 @@ internal class SearchWindow<T>(
 abstract class BaseListWindow<T>(
     private val jumpSize: Int,
     private val toSearchString: (T) -> String,
+    protected val keybindings: ListKeybindings = ListKeybindings(),
 ) {
     @Volatile protected var focusedIndex: Int = -1
     @Volatile protected var scrollOffset: Int = 0
     @Volatile protected var lastListH: Int = 20
-    @Volatile protected var searchWindow: Window<*>? = null
+    @Volatile protected var searchWindow: InputReceiver? = null
     @Volatile private var searchWindowComponent: Component? = null
 
     protected abstract fun displayItems(): List<ListEntry<T>>
     protected abstract fun onItemActivated(item: ListEntry.Item<T>)
-    protected open fun getVisibleHeight(): Int = Terminal.size().dimy
 
     protected fun buildSearchBar(): Component? = searchWindowComponent
 
@@ -105,21 +111,21 @@ abstract class BaseListWindow<T>(
         val sw = searchWindow
         if (sw != null) return sw.onInput(event)
         return when {
-            event.isKey(Key.ArrowUp) || isChar(event, "k") -> { moveUp(1); true }
-            event.isKey(Key.ArrowDown) || isChar(event, "j") -> { moveDown(1); true }
-            event.isKey(Key.PageUp) || event.isKey(Key.CtrlU) -> { moveUp(jumpSize); true }
-            event.isKey(Key.PageDown) || event.isKey(Key.CtrlD) -> { moveDown(jumpSize); true }
-            event.isKey(Key.Home) || isChar(event, "g") -> { focusFirst(); true }
-            event.isKey(Key.End) || isChar(event, "G") -> { focusLast(); true }
-            event.isKey(Key.Return) -> {
+            event.matches(keybindings.moveUpKeys, keybindings.moveUpChars) -> { moveUp(1); true }
+            event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
+            event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(jumpSize); true }
+            event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(jumpSize); true }
+            event.matches(keybindings.homeKeys, keybindings.homeChars) -> { focusFirst(); true }
+            event.matches(keybindings.endKeys, keybindings.endChars) -> { focusLast(); true }
+            event.matches(keybindings.selectKeys, keybindings.selectChars) -> {
                 val entry = displayItems().getOrNull(focusedIndex)
                 if (entry is ListEntry.Item) {
                     @Suppress("UNCHECKED_CAST")
-                    onItemActivated(entry as ListEntry.Item<T>)
+                    onItemActivated(entry)
                     true
                 } else false
             }
-            isChar(event, "/") -> { activateSearch(); true }
+            event.matches(keybindings.searchKeys, keybindings.searchChars) -> { activateSearch(); true }
             else -> false
         }
     }
@@ -141,7 +147,7 @@ abstract class BaseListWindow<T>(
             onDismiss = { deactivateSearch() },
         )
         searchWindow = sw
-        searchWindowComponent = sw.render(Unit)
+        searchWindowComponent = sw.render()
     }
 
     protected open fun deactivateSearch() {
@@ -192,21 +198,20 @@ abstract class BaseListWindow<T>(
 }
 
 // ---------------------------------------------------------------------------
-// ListWindow
+// ListView
 // ---------------------------------------------------------------------------
 
-open class ListWindow<T>(
+open class ListView<T>(
     private val renderItem: (data: T, focused: Boolean) -> Element,
     private val renderHeader: (data: T) -> Element,
     toSearchString: (T) -> String = { it.toString() },
     pageSize: Int = 10,
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString), Window<ListState<T>> {
+    private val onStateChange: ((ListState<T>) -> Unit)? = null,
+    private val onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
+    keybindings: ListKeybindings = ListKeybindings(),
+) : BaseListWindow<T>(jumpSize = pageSize, toSearchString = toSearchString, keybindings = keybindings), InputReceiver {
 
     @Volatile private var state: ListState<T> = ListState(emptyList())
-
-    override val activeSubWindow: Window<*>? get() = searchWindow
 
     override fun displayItems(): List<ListEntry<T>> = state.entries
 
@@ -215,27 +220,70 @@ open class ListWindow<T>(
     // Call this whenever the Screen's state observer receives a new emission.
     fun updateState(newState: ListState<T>) {
         state = newState
+        if (onStateChange != null) {
+            focusedIndex = newState.focusedIndex
+            scrollOffset = newState.scrollOffset
+        }
         ensureValidFocus()
         ensureScrollCoversSelection()
     }
 
-    // Override to constrain the visible height for partial-screen layouts.
-    override fun getVisibleHeight(): Int = Terminal.size().dimy
-
-    override fun render(state: ListState<T>): Component {
+    fun render(state: ListState<T>): Component {
         this.state = state
+        if (onStateChange != null) {
+            this.focusedIndex = state.focusedIndex
+            this.scrollOffset = state.scrollOffset
+        }
+        val prevFocus = focusedIndex
         ensureValidFocus()
+        if (onStateChange != null && focusedIndex != prevFocus) {
+            notifyStateChange()
+        }
         return renderer { buildElement() }
     }
 
-    override fun onInput(event: FtxUIEvent): Boolean = handleListInput(event)
+    override fun onInput(event: FtxUIEvent): Boolean {
+        val oldFocus = focusedIndex
+        val oldScroll = scrollOffset
+        val oldSearchActive = searchWindow != null
+        val oldSearchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
+
+        val handled = handleListInput(event)
+
+        if (handled) {
+            val newSearchActive = searchWindow != null
+            val newSearchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
+            if (focusedIndex != oldFocus || scrollOffset != oldScroll || newSearchActive != oldSearchActive || newSearchQuery != oldSearchQuery) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = ListState(
+            entries = state.entries,
+            focusedIndex = focusedIndex,
+            scrollOffset = scrollOffset,
+            searchActive = searchWindow != null,
+            searchQuery = (searchWindow as? SearchWindow<*>)?.query ?: ""
+        )
+        onStateChange?.invoke(newState)
+
+        val item = state.entries.getOrNull(focusedIndex)
+        if (item is ListEntry.Item) {
+            onSelectionChanged?.invoke(item.data)
+        } else {
+            onSelectionChanged?.invoke(null)
+        }
+    }
 
     private fun buildElement(): Element {
         val entries = state.entries
         if (entries.isEmpty()) return emptyElement()
 
         val swComp = buildSearchBar()
-        val totalH = contentHeight()
+        val totalH = Terminal.size().dimy
         val listH = if (swComp != null) maxOf(1, totalH - 2) else totalH
         lastListH = listH
 
@@ -254,12 +302,11 @@ open class ListWindow<T>(
             vScrollBar(scrollOffset, entries.size, listH),
         )
 
-        val content = if (swComp != null) {
+        return if (swComp != null) {
             vbox(swComp.render(), separator(), listRow)
         } else {
             listRow
         }
-        return wrapWithDecorations(content)
     }
 
     private fun ensureValidFocus() {

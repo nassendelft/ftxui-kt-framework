@@ -6,14 +6,17 @@ import nl.ncaj.ftxui.*
 data class TextEditorState(
     val content: String = "",
     val showLineNumbers: Boolean = true,
+    val cursorLine: Int = 0,
+    val cursorCol: Int = 0,
+    val scrollOffset: Int = 0
 )
 
-open class TextEditorWindow(
+open class TextEditorView(
     private val showLineNumbers: Boolean = true,
     val onContentChange: ((String) -> Unit)? = null,
-    override val extraHeader: WindowSection? = null,
-    override val extraFooter: WindowSection? = null,
-) : Window<TextEditorState> {
+    private val onStateChange: ((TextEditorState) -> Unit)? = null,
+    private val keybindings: TextEditorKeybindings = TextEditorKeybindings(),
+) : InputReceiver {
 
     @Volatile private var lines: MutableList<String> = mutableListOf("")
     @Volatile private var cursorLine: Int = 0
@@ -36,19 +39,29 @@ open class TextEditorWindow(
         history.reset(lines.toList())
     }
 
-    override fun getVisibleHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
+    private fun contentHeight(): Int = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
 
-    override fun render(state: TextEditorState): Component {
+    fun render(state: TextEditorState): Component {
         if (lines.size == 1 && lines[0].isEmpty() && state.content.isNotEmpty()) {
             setText(state.content)
+        }
+        if (onStateChange != null) {
+            cursorLine = state.cursorLine
+            cursorCol = state.cursorCol
+            scrollOffset = state.scrollOffset
         }
         return renderer { buildElement(state.showLineNumbers && showLineNumbers) }
     }
 
     override fun onInput(event: FtxUIEvent): Boolean {
-        return when {
-            event.isKey(Key.CtrlZ) -> { applyUndo(); true }
-            event.isKey(Key.CtrlY) -> { applyRedo(); true }
+        val oldLine = cursorLine
+        val oldCol = cursorCol
+        val oldScroll = scrollOffset
+        val oldText = getText()
+
+        val handled = when {
+            event.matches(keybindings.undoKeys, keybindings.undoChars) -> { applyUndo(); true }
+            event.matches(keybindings.redoKeys, keybindings.redoChars) -> { applyRedo(); true }
             event.isKey(Key.ArrowUp)    -> { moveCursorUp(1); true }
             event.isKey(Key.ArrowDown)  -> { moveCursorDown(1); true }
             event.isKey(Key.ArrowLeft)  -> { moveCursorLeft(); true }
@@ -66,6 +79,24 @@ open class TextEditorWindow(
             }
             else -> false
         }
+
+        if (handled) {
+            if (cursorLine != oldLine || cursorCol != oldCol || scrollOffset != oldScroll || getText() != oldText) {
+                notifyStateChange()
+            }
+        }
+        return handled
+    }
+
+    private fun notifyStateChange() {
+        val newState = TextEditorState(
+            content = getText(),
+            showLineNumbers = showLineNumbers,
+            cursorLine = cursorLine,
+            cursorCol = cursorCol,
+            scrollOffset = scrollOffset
+        )
+        onStateChange?.invoke(newState)
     }
 
     // -----------------------------------------------------------------------
@@ -221,10 +252,10 @@ open class TextEditorWindow(
             else text(" ")
         }
 
-        return wrapWithDecorations(hbox(
+        return hbox(
             vbox(*filled.toTypedArray()).flex(),
             vScrollBar(scrollOffset, lines.size, visH),
-        ))
+        )
     }
 
     private fun renderCursorLine(line: String): Element {

@@ -5,7 +5,7 @@ import nl.ncaj.ftxui.*
 abstract class Screen<S, E> {
     abstract val viewModel: ViewModel<S, E>
     open val globalShortcuts: List<Shortcut> = emptyList()
-    open val activeWindow: Window<*>? get() = null
+    open val activeWindow: InputReceiver? get() = null
 
     // Subclasses implement this to provide their main content area.
     protected abstract fun buildContent(state: S): Component
