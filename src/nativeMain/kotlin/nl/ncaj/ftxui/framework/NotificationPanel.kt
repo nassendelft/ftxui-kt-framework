@@ -9,7 +9,7 @@ import kotlin.concurrent.Volatile
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
-internal class NotificationPanelView(
+internal class NotificationPanel(
     private val scope: CoroutineScope,
     private val requestFrame: () -> Unit,
     private val getLog: () -> List<NotificationRecord>,

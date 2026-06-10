@@ -8,7 +8,7 @@ data class DashboardCell(
     val onInput: ((FtxUIEvent) -> Boolean)? = null,
 )
 
-fun ScreenContext.dashboardView(
+fun ScreenContext.dashboard(
     cells: List<DashboardCell>,
     columns: Int = 2,
     style: DashboardStyle = DashboardStyle()

@@ -3,7 +3,7 @@ package nl.ncaj.ftxui.framework
 import kotlinx.coroutines.*
 import nl.ncaj.ftxui.*
 
-fun <T> ScreenContext.paginatedListView(
+fun <T> ScreenContext.paginatedList(
     pageSize: Int = 50,
     loadThreshold: Int = 10,
     loadPage: suspend (offset: Int, limit: Int) -> List<ListEntry<T>>,

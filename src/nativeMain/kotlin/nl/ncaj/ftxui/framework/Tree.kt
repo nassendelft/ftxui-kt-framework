@@ -18,7 +18,7 @@ data class TreeState<T>(
 
 private data class FlatItem<T>(val node: TreeNode<T>, val depth: Int, val path: List<Int>)
 
-fun <T> ScreenContext.treeView(
+fun <T> ScreenContext.tree(
     getState: () -> TreeState<T>,
     renderNode: (data: T, depth: Int, focused: Boolean, hasChildren: Boolean, isExpanded: Boolean) -> Element,
     keybindings: TreeKeybindings = TreeKeybindings(),

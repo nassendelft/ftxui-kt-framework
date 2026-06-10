@@ -24,7 +24,7 @@ data class FilePickerState(
 )
 
 @OptIn(ExperimentalForeignApi::class)
-fun ScreenContext.filePickerView(
+fun ScreenContext.filePicker(
     initialPath: String = ".",
     onFileSelected: (String) -> Unit = {},
     showHiddenInitially: Boolean = false,

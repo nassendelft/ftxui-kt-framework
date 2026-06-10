@@ -26,7 +26,7 @@ class TextEditorDemoScreen : Screen() {
     )
 
     override fun buildContent(context: ScreenContext): Component {
-        editorComponent = context.textEditorView(
+        editorComponent = context.textEditor(
             content = ::editorText,
             showLineNumbers = true,
             onContentChange = { text ->
@@ -80,7 +80,7 @@ class FilePickerDemoScreen : Screen() {
     override val activeWindow get() = pickerComponent
 
     override fun buildContent(context: ScreenContext): Component {
-        pickerComponent = context.filePickerView(
+        pickerComponent = context.filePicker(
             initialPath = ".",
             onFileSelected = { path ->
                 navigator?.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
@@ -108,7 +108,7 @@ class DashboardDemoScreen : Screen() {
     override fun buildContent(context: ScreenContext): Component {
         val fruits = listOf("Apple", "Banana", "Cherry", "Dragon Fruit", "Elderberry", "Fig")
             .map { ListEntry.Item(it) }
-        val fruitList = context.listView(
+        val fruitList = context.list(
             getEntries = { fruits },
             renderItem = { name, focused ->
                 if (focused) text("  $name").inverted() else text("  $name")
@@ -118,7 +118,7 @@ class DashboardDemoScreen : Screen() {
 
         val veggies = listOf("Artichoke", "Broccoli", "Carrot", "Daikon", "Eggplant")
             .map { ListEntry.Item(it) }
-        val vegList = context.listView(
+        val vegList = context.list(
             getEntries = { veggies },
             renderItem = { name, focused ->
                 if (focused) text("  $name").inverted() else text("  $name")
@@ -133,7 +133,7 @@ class DashboardDemoScreen : Screen() {
             "Focused cell receives key input.",
             "Each cell wraps any Window type.",
         ))
-        val pager = context.pagerView(
+        val pager = context.pager(
             getState = { pagerState }
         )
 
@@ -146,7 +146,7 @@ class DashboardDemoScreen : Screen() {
             )
         }
 
-        dashboardComponent = context.dashboardView(
+        dashboardComponent = context.dashboard(
             columns = 2,
             cells = listOf(
                 DashboardCell(
@@ -182,7 +182,7 @@ class PaginatedListDemoScreen : Screen() {
     override val activeWindow get() = pagedList
 
     override fun buildContent(context: ScreenContext): Component {
-        pagedList = context.paginatedListView(
+        pagedList = context.paginatedList(
             pageSize = 25,
             loadThreshold = 5,
             loadPage = { offset, limit ->
@@ -296,7 +296,7 @@ class StepProgressDemoScreen : Screen() {
                 context.requestRedraw()
             }
         }
-        progressComponent = context.stepProgressView(
+        progressComponent = context.stepProgress(
             getState = { viewModel.state.value }
         )
         return progressComponent
@@ -320,12 +320,12 @@ class ResponsiveDemoScreen : Screen() {
 
     private lateinit var leftList: Component
     private lateinit var rightPager: Component
-    private lateinit var splitView: Component
+    private lateinit var split: Component
 
-    override val activeWindow get() = if (Terminal.size().dimx >= 100) splitView else leftList
+    override val activeWindow get() = if (Terminal.size().dimx >= 100) split else leftList
 
     override fun buildContent(context: ScreenContext): Component {
-        leftList = context.listView(
+        leftList = context.list(
             getEntries = { items },
             renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
             renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
@@ -337,11 +337,11 @@ class ResponsiveDemoScreen : Screen() {
             }
         )
 
-        rightPager = context.pagerView(
+        rightPager = context.pager(
             getState = { detailState }
         )
 
-        splitView = context.splitView(
+        split = context.split(
             left = leftList,
             right = rightPager,
             leftTitle = "Items",
@@ -349,9 +349,9 @@ class ResponsiveDemoScreen : Screen() {
         )
 
         return renderer {
-            responsive(breakpoint = 100,
+            responsiveHorizontal(breakpoint = 100,
                 narrow = { leftList },
-                wide   = { splitView },
+                wide   = { split },
             ).render()
         }
     }
@@ -375,3 +375,277 @@ class ResponsiveDemoScreen : Screen() {
         "Width: ${Terminal.size().dimx} columns."
     )
 }
+
+// =============================================================================
+// Screen — Spinners catalog demo
+// =============================================================================
+
+enum class SpinnerCategory(val displayName: String) {
+    Classics("Classics & Basic ASCII"),
+    Braille("Advanced Braille"),
+    Blocks("Blocks, Bars & Segments"),
+    Circles("Circles & Accents"),
+    Geometric("Geometric Directives"),
+    Text("Text & Alphabets"),
+    Emoji("Emoji & Specials")
+}
+
+data class SpinnersDemoState(
+    val tick: Int,
+    val delayMs: Long
+)
+
+sealed class SpinnerDemoEvent {
+    data object SpeedUp : SpinnerDemoEvent()
+    data object SlowDown : SpinnerDemoEvent()
+    data object ResetSpeed : SpinnerDemoEvent()
+}
+
+class SpinnersDemoViewModel : ViewModel<SpinnersDemoState, SpinnerDemoEvent>() {
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val _state = MutableStateFlow(SpinnersDemoState(tick = 0, delayMs = 80L))
+    override val state: StateFlow<SpinnersDemoState> = _state
+    private var job: Job? = null
+
+    init {
+        start()
+    }
+
+    fun start() {
+        if (job != null) return
+        job = scope.launch {
+            while (isActive) {
+                delay(_state.value.delayMs.milliseconds)
+                _state.value = _state.value.copy(tick = _state.value.tick + 1)
+            }
+        }
+    }
+
+    fun cancel() {
+        job?.cancel()
+        job = null
+        scope.cancel()
+    }
+
+    override fun onEvent(event: SpinnerDemoEvent) {
+        when (event) {
+            SpinnerDemoEvent.SpeedUp -> {
+                val newDelay = (_state.value.delayMs - 10L).coerceAtLeast(10L)
+                _state.value = _state.value.copy(delayMs = newDelay)
+            }
+            SpinnerDemoEvent.SlowDown -> {
+                val newDelay = (_state.value.delayMs + 10L).coerceAtMost(1000L)
+                _state.value = _state.value.copy(delayMs = newDelay)
+            }
+            SpinnerDemoEvent.ResetSpeed -> {
+                _state.value = _state.value.copy(delayMs = 80L)
+            }
+        }
+    }
+}
+
+class SpinnersDemoScreen : Screen() {
+    private val viewModel = SpinnersDemoViewModel()
+    private var navigator: Navigator? = null
+    private lateinit var split: Component
+
+    private val categorySpinners = mapOf(
+        SpinnerCategory.Classics to listOf(
+            "pipeClassic" to Spinners.pipeClassic,
+            "pipeSimple" to Spinners.pipeSimple,
+            "plusMinus" to Spinners.plusMinus,
+            "mathSymbols" to Spinners.mathSymbols,
+            "binaryBlink" to Spinners.binaryBlink,
+            "hashSpin" to Spinners.hashSpin,
+            "cleanDotChase" to Spinners.cleanDotChase,
+            "bouncyVee" to Spinners.bouncyVee,
+            "asciiFlasher" to Spinners.asciiFlasher,
+            "inequalityShift" to Spinners.inequalityShift,
+            "cornerSlash" to Spinners.cornerSlash
+        ),
+        SpinnerCategory.Braille to listOf(
+            "brailleWheel" to Spinners.brailleWheel,
+            "brailleArc" to Spinners.brailleArc,
+            "brailleWave" to Spinners.brailleWave,
+            "brailleBounce" to Spinners.brailleBounce,
+            "dotOrbit" to Spinners.dotOrbit,
+            "brailleDoubleChaser" to Spinners.brailleDoubleChaser,
+            "brailleDna" to Spinners.brailleDna,
+            "brailleXPattern" to Spinners.brailleXPattern,
+            "brailleInnerOrbit" to Spinners.brailleInnerOrbit,
+            "brailleExpandingRing" to Spinners.brailleExpandingRing
+        ),
+        SpinnerCategory.Blocks to listOf(
+            "quadrantClockwise" to Spinners.quadrantClockwise,
+            "quadrantCounter" to Spinners.quadrantCounter,
+            "quadrantChase" to Spinners.quadrantChase,
+            "verticalGrow" to Spinners.verticalGrow,
+            "horizontalGrow" to Spinners.horizontalGrow,
+            "blockFlash" to Spinners.blockFlash,
+            "blockStep" to Spinners.blockStep,
+            "blockRotate" to Spinners.blockRotate,
+            "horizontalFill" to Spinners.horizontalFill,
+            "boxCorners" to Spinners.boxCorners,
+            "thickLines" to Spinners.thickLines,
+            "blockBlink" to Spinners.blockBlink,
+            "diagonalBlocks" to Spinners.diagonalBlocks,
+            "layeredBlocks" to Spinners.layeredBlocks
+        ),
+        SpinnerCategory.Circles to listOf(
+            "circleHalves" to Spinners.circleHalves,
+            "circleQuarters" to Spinners.circleQuarters,
+            "circleBlink" to Spinners.circleBlink,
+            "circleArc" to Spinners.circleArc,
+            "rings" to Spinners.rings,
+            "radarPulse" to Spinners.radarPulse,
+            "diamondPulse" to Spinners.diamondPulse,
+            "burstingStar" to Spinners.burstingStar
+        ),
+        SpinnerCategory.Geometric to listOf(
+            "arrowsClockwise" to Spinners.arrowsClockwise,
+            "arrowsCardinal" to Spinners.arrowsCardinal,
+            "triangleBounce" to Spinners.triangleBounce,
+            "openTriangleSpin" to Spinners.openTriangleSpin,
+            "cornerBracket" to Spinners.cornerBracket,
+            "crossHair" to Spinners.crossHair,
+            "starTwinkle" to Spinners.starTwinkle,
+            "pipeJoints" to Spinners.pipeJoints,
+            "inlineDashSweep" to Spinners.inlineDashSweep,
+            "lineOscillator" to Spinners.lineOscillator
+        ),
+        SpinnerCategory.Text to listOf(
+            "abcChaser" to Spinners.abcChaser,
+            "loadingTextWord" to Spinners.loadingTextWord,
+            "countingHex" to Spinners.countingHex,
+            "subScriptSpin" to Spinners.subScriptSpin
+        ),
+        SpinnerCategory.Emoji to listOf(
+            "hourglassEmoji" to Spinners.hourglassEmoji,
+            "clockEmoji" to Spinners.clockEmoji,
+            "moonPhases" to Spinners.moonPhases,
+            "diceRoll" to Spinners.diceRoll,
+            "heartBeat" to Spinners.heartBeat,
+            "earthSpin" to Spinners.earthSpin,
+            "pacmanRetro" to Spinners.pacmanRetro,
+            "happyFaceWink" to Spinners.happyFaceWink
+        )
+    )
+
+    override val activeWindow get() = split
+
+    override val globalShortcuts get() = listOf(
+        Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
+            viewModel.onEvent(SpinnerDemoEvent.ResetSpeed)
+        },
+        Shortcut("+", "+ Speed+", description = "Increase speed") {
+            viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+        },
+        Shortcut("-", "- Speed-", description = "Decrease speed") {
+            viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+        },
+        Shortcut("]", "]", showInStatusBar = false, description = "Increase speed") {
+            viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+        },
+        Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
+            viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+        }
+    )
+
+    override fun buildContent(context: ScreenContext): Component {
+        var tick by context.mutableStateOf(0)
+        var selectedCategory by context.mutableStateOf(SpinnerCategory.Classics)
+
+        GlobalScope.launch {
+            viewModel.state.collect { state ->
+                tick = state.tick
+            }
+        }
+
+        val categories = SpinnerCategory.values().toList()
+        val categoryEntries = categories.map { ListEntry.Item(it) }
+
+        val leftList = context.list(
+            getEntries = { categoryEntries },
+            renderItem = { category, focused ->
+                val row = if (focused) hbox(text(" ▶ ").bold(), text(category.displayName)).inverted()
+                          else hbox(text("   "), text(category.displayName))
+                vbox(row, text(" "))
+            },
+            renderHeader = { category -> hbox(text(" ── ${category.displayName} ──").bold(), filler()) },
+            onFocusChange = { idx ->
+                categories.getOrNull(idx)?.let { category ->
+                    selectedCategory = category
+                }
+            }
+        )
+
+        val rightList = context.list(
+            getEntries = {
+                categorySpinners[selectedCategory]?.map { ListEntry.Item(it) } ?: emptyList()
+            },
+            renderItem = { entry, focused ->
+                val name = entry.first
+                val frames = entry.second
+                val activeIndex = tick % frames.size
+                val activeFrame = frames[activeIndex]
+
+                val framesText = mutableListOf<Element>()
+                frames.forEachIndexed { idx, frame ->
+                    if (idx > 0) framesText.add(text(" "))
+                    if (idx == activeIndex) {
+                        framesText.add(text(frame).color(Theme.current.accent).bold())
+                    } else {
+                        framesText.add(text(frame).dim())
+                    }
+                }
+
+                val row = hbox(
+                    text("  "),
+                    text(activeFrame.padEnd(4)).color(Theme.current.success).bold(),
+                    text(name.padEnd(22)).bold(),
+                    text(" [ ").dim(),
+                    *framesText.toTypedArray(),
+                    text(" ]").dim()
+                )
+
+                val content = if (focused) row.inverted() else row
+                vbox(content, text(" "))
+            },
+            renderHeader = { entry ->
+                hbox(text(" ── ${entry.first} ──").bold(), filler())
+            }
+        )
+
+        split = context.split(
+            left = leftList,
+            right = rightList,
+            leftTitle = "Categories",
+            rightTitle = "Spinners"
+        )
+
+        return split
+    }
+
+    override fun buildStatusBar(): Element {
+        val delayMs = viewModel.state.value.delayMs
+        val baseStatusBar = super.buildStatusBar()
+        return hbox(
+            baseStatusBar,
+            filler(),
+            text("Speed: ").dim(),
+            text("${delayMs}ms").bold().color(Theme.current.accent),
+            text("  (Use +/- or [/] to adjust)  ").dim()
+        )
+    }
+
+    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
+        this.navigator = navigator
+        if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) {
+            viewModel.cancel()
+            navigator.pop()
+            return true
+        }
+        return super.handleInput(event, navigator)
+    }
+}
+

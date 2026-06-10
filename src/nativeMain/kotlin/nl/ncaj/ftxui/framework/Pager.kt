@@ -7,7 +7,7 @@ data class PagerState(
     val showLineNumbers: Boolean = false
 )
 
-fun ScreenContext.pagerView(
+fun ScreenContext.pager(
     getState: () -> PagerState,
     keybindings: PagerKeybindings = PagerKeybindings(),
     style: PagerStyle = PagerStyle()
@@ -64,7 +64,7 @@ fun ScreenContext.pagerView(
         }
     }
 
-    val base = focusableRenderer { focused ->
+    val base = focusableRenderer {
         val state = getState()
         val lines = state.lines
         val hasSearch = searching || searchQuery.isNotEmpty()

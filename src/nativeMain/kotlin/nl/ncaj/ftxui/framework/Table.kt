@@ -9,7 +9,7 @@ data class TableColumn<T>(
     val renderCell: ((item: T, width: Int, focused: Boolean) -> Element)? = null,
 )
 
-fun <T> ScreenContext.tableView(
+fun <T> ScreenContext.table(
     getRows: () -> List<T>,
     columns: List<TableColumn<T>>,
     onEnter: ((T) -> Unit)? = null,

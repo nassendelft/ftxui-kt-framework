@@ -24,7 +24,7 @@ kotlin {
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget> {
         binaries {
             executable {
-                entryPoint = "main"
+                entryPoint = "demoMain"
                 baseName = "ftxui-kt-framework"
             }
         }

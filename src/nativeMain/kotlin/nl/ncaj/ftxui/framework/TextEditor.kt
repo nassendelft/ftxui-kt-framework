@@ -11,7 +11,7 @@ data class TextEditorState(
     val scrollOffset: Int = 0
 )
 
-fun ScreenContext.textEditorView(
+fun ScreenContext.textEditor(
     content: KMutableProperty0<String>,
     showLineNumbers: Boolean = true,
     onContentChange: ((String) -> Unit)? = null,

@@ -7,7 +7,7 @@ sealed class ListEntry<out T> {
     class Item<out T>(val data: T, val onEnter: (() -> Unit)? = null) : ListEntry<T>()
 }
 
-fun <T> ScreenContext.listView(
+fun <T> ScreenContext.list(
     getEntries: () -> List<ListEntry<T>>,
     renderItem: (data: T, focused: Boolean) -> Element,
     renderHeader: (data: T) -> Element,

@@ -18,7 +18,7 @@ data class StepProgressState(
     val expandedSteps: Set<Int> = emptySet()
 )
 
-fun ScreenContext.stepProgressView(
+fun ScreenContext.stepProgress(
     getState: () -> StepProgressState,
     keybindings: StepProgressKeybindings = StepProgressKeybindings(),
     style: StepProgressStyle = StepProgressStyle(),

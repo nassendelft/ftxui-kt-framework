@@ -2,7 +2,7 @@ package nl.ncaj.ftxui.framework
 
 import nl.ncaj.ftxui.*
 
-fun ScreenContext.splitView(
+fun ScreenContext.split(
     left: Component,
     right: Component,
     leftTitle: String = "",

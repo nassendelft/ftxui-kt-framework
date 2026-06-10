@@ -41,7 +41,7 @@ class MyScreen : Screen() {
 
     override fun buildContent(context: ScreenContext): Component {
         // Built once; reacts to `count` updates automatically triggering redraw
-        return context.listView(
+        return context.list(
             getEntries = { getItems(count) },
             renderItem = { item, focused ->
                 if (focused) text(item.name).inverted() else text(item.name)
@@ -77,7 +77,7 @@ Reactivity in screens can be managed in two ways:
 
 ### Views & Components
 
-Views are not subclassed classes anymore; they are declarative `Component` functions built as extensions on `ScreenContext` (e.g. `listView`, `tableView`, `splitView`). Under the hood, they wrap native FTXUI focus and event handling logic, and accept lambda retrievers (e.g., `getEntries = { ... }`) to pull state dynamically on render.
+Views are not subclassed classes anymore; they are declarative `Component` functions built as extensions on `ScreenContext` (e.g. `list`, `table`, `split`). Under the hood, they wrap native FTXUI focus and event handling logic, and accept lambda retrievers (e.g., `getEntries = { ... }`) to pull state dynamically on render.
 
 ### Navigator
 
@@ -137,12 +137,12 @@ Tab navigation uses `Alt+H` / `Alt+L` to switch tabs. Each tab maintains its own
 
 All views are instantiated via `ScreenContext` extension methods and return a standard FTXUI `Component`.
 
-### listView
+### list
 
 Scrollable list with headers, fuzzy search, and vim-style navigation.
 
 ```kotlin
-val list = context.listView(
+val list = context.list(
     getEntries = {
         buildList {
             add(ListEntry.Header("Fruits"))
@@ -160,12 +160,12 @@ val list = context.listView(
 
 Keys: `j`/`k` navigate, `g`/`G` top/bottom, `Ctrl+U`/`D` half-page, `/` to activate fuzzy search.
 
-### tableView
+### table
 
 Sortable table with customisable column renderers.
 
 ```kotlin
-val table = context.tableView(
+val table = context.table(
     getRows = { FRUIT_ROWS },
     columns = listOf(
         TableColumn("Name", extract = { it.name }),
@@ -185,24 +185,24 @@ val table = context.tableView(
 
 Keys: `j`/`k` navigate, `s` cycles column sort (▲ / ▼ / off), `Enter` triggers `onEnter`.
 
-### pagerView
+### pager
 
 Read-only scrollable text panel with incremental search.
 
 ```kotlin
-val pager = context.pagerView(
+val pager = context.pager(
     getState = { PagerState(lines = myLines, showLineNumbers = true) }
 )
 ```
 
 Keys: `j`/`k`/`g`/`G` scroll, `/` search, `n`/`N` next/prev match.
 
-### treeView
+### tree
 
 Hierarchical tree with expand/collapse nodes.
 
 ```kotlin
-val tree = context.treeView(
+val tree = context.tree(
     getState = { TreeState(roots) },
     renderNode = { label, depth, focused, hasChildren, isExpanded ->
         if (focused) text(label).inverted() else text(label)
@@ -212,12 +212,12 @@ val tree = context.treeView(
 
 Create a tree of `TreeNode<T>` which defines `children`, `isExpanded`, and optional `onToggle`/`onEnter` callbacks.
 
-### splitView
+### split
 
 Two components side-by-side; Tab/Shift+Tab switches focus, and the inactive panel is dimmed automatically.
 
 ```kotlin
-val split = context.splitView(
+val split = context.split(
     left = leftComponent,
     right = rightComponent,
     leftTitle = "Left Pane",
@@ -225,14 +225,14 @@ val split = context.splitView(
 )
 ```
 
-### textEditorView
+### textEditor
 
 Multiline text editor with built-in undo/redo stack. Requires `enableCtrlZ = true` in `runApp()`.
 
 ```kotlin
 var text = "Initial Text"
 
-val editor = context.textEditorView(
+val editor = context.textEditor(
     content = ::text, // KMutableProperty0<String>
     showLineNumbers = true,
     onContentChange = { newText -> Logger.debug("Text length: ${newText.length}") },
@@ -246,12 +246,12 @@ val editor = context.textEditorView(
 
 Keys: Arrow keys, `Ctrl+Z`/`Y` undo/redo. Line numbers are rendered automatically.
 
-### filePickerView
+### filePicker
 
 POSIX filesystem browser.
 
 ```kotlin
-val picker = context.filePickerView(
+val picker = context.filePicker(
     initialPath = ".",
     onFileSelected = { path -> navigator.pop(); handleFile(path) },
     showHiddenInitially = false,
@@ -261,12 +261,12 @@ val picker = context.filePickerView(
 
 Keys: `j`/`k` navigate, `Enter` enter directory or select file, `Backspace`/`h` go up, `/` filter, `.` toggle hidden files.
 
-### dashboardView
+### dashboard
 
 Grid of independent cells, each rendering a child `Component`.
 
 ```kotlin
-val dashboard = context.dashboardView(
+val dashboard = context.dashboard(
     columns = 2,
     cells = listOf(
         DashboardCell("CPU Gauge", render = { cpuGaugeComponent }),
@@ -277,12 +277,12 @@ val dashboard = context.dashboardView(
 
 Keys: `Tab`/`Shift+Tab` cycle active cell focus.
 
-### paginatedListView
+### paginatedList
 
 Lazily loads pages of data reactively via a suspend loader.
 
 ```kotlin
-val paginated = context.paginatedListView(
+val paginated = context.paginatedList(
     pageSize = 50,
     loadThreshold = 10,
     loadPage = { offset, limit -> fetchItems(offset, limit) }, // suspend function returning List<ListEntry<T>>
@@ -293,12 +293,12 @@ val paginated = context.paginatedListView(
 
 A loading row appears at the bottom while next page fetches. Fuzzy search `/` filters over all currently loaded items.
 
-### stepProgressView
+### stepProgress
 
 Renders a pipeline pipeline of steps with status icons, spinners, and expandable output.
 
 ```kotlin
-val progress = context.stepProgressView(
+val progress = context.stepProgress(
     getState = {
         StepProgressState(
             steps = listOf(
@@ -326,7 +326,7 @@ val customListStyle = ListStyle(
     headerForeground = Color.Cyan
 )
 
-val listView = context.listView(
+val listView = context.list(
     getEntries = { entries },
     renderItem = { item, focused -> text(item) },
     renderHeader = { text(it) },
@@ -378,7 +378,7 @@ class MyScreen : AsyncScreen<MyData, MyEvent>() {
     override val viewModel = MyViewModel()
 
     override fun ScreenContext.buildLoaded(data: MyData): Component =
-        listView(
+        list(
             getEntries = { data.items.map { ListEntry.Item(it) } },
             renderItem = { name, focused -> text(name) },
             renderHeader = { text(it) }
@@ -467,7 +467,7 @@ Preferences are saved automatically on app exit.
 
 ### UndoRedoStack\<T\>
 
-Generic undo/redo stack (used internally by `textEditorView`).
+Generic undo/redo stack (used internally by `textEditor`).
 
 ```kotlin
 val history = UndoRedoStack(initial = emptyList<String>(), maxSize = 100)
@@ -510,6 +510,6 @@ val component = responsive(
 
 - `Preferences.init(appName)` must be called before `runApp()`.
 - `Ctrl+N` and `Ctrl+L` are reserved by the framework; do not register them on screens.
-- `enableCtrlZ = true` is required in `runApp()` to use undo/redo in `textEditorView`.
+- `enableCtrlZ = true` is required in `runApp()` to use undo/redo in `textEditor`.
 - Component focus is managed via native FTXUI focus APIs. Specify the active component that should receive input via the `activeWindow` property on the screen.
 - `TabApp` uses `Alt+H`/`L` for tab navigation — `Ctrl+Tab` is avoided because it is intercepted by most terminal emulators.

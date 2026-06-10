@@ -8,7 +8,7 @@ import kotlinx.coroutines.launch
 import nl.ncaj.ftxui.*
 import kotlin.time.Duration.Companion.milliseconds
 
-fun main() {
+fun demoMain() {
     Preferences.init("ftxui-kt-demo")
     runApp(HomeScreen(), confirmOnQuit = true, enableCtrlZ = true)
 }
@@ -104,6 +104,7 @@ class HomeScreen : Screen() {
             add(ListEntry.Item(MenuItem("Dashboard",        "2×2 grid of Dashboard cells")) { navigator.push(DashboardDemoScreen()) })
             add(ListEntry.Item(MenuItem("Paginated List",   "500 items loaded lazily in pages")) { navigator.push(PaginatedListDemoScreen()) })
             add(ListEntry.Item(MenuItem("Step Progress",    "Multi-step pipeline with spinner")) { navigator.push(StepProgressDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Spinners Demo",    "Catalog of all 65 animated spinners")) { navigator.push(SpinnersDemoScreen()) })
             add(ListEntry.Item(MenuItem("Responsive Layout","Narrow vs. wide terminal layout")) { navigator.push(ResponsiveDemoScreen()) })
             add(ListEntry.Item(MenuItem("Tab App Demo",     "Re-launch demo using TabApp")) {
                 navigator.showDialog(Dialog.Alert(
@@ -116,7 +117,7 @@ class HomeScreen : Screen() {
             add(ListEntry.Item(MenuItem("Quit", "")) { navigator.pop() })
         }
 
-        return context.listView(
+        return context.list(
             getEntries = { entries },
             renderItem = { item, focused ->
                 val label = text("  ${item.label.padEnd(20)} ")
@@ -198,7 +199,7 @@ class FruitListScreen : Screen() {
                 context.requestRedraw()
             }
         }
-        return context.listView(
+        return context.list(
             getEntries = { buildListState(viewModel.state.value) },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
@@ -254,7 +255,7 @@ class DetailScreen(fruit: Fruit) : Screen() {
 
     override fun buildContent(context: ScreenContext): Component {
         this.navigator = context.navigator
-        listComponent = context.listView(
+        listComponent = context.list(
             getEntries = { entries },
             renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
             renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
@@ -278,7 +279,7 @@ class PagerDemoScreen : Screen() {
         override fun onEvent(event: Nothing) {}
     }
 
-    override fun buildContent(context: ScreenContext): Component = context.pagerView(
+    override fun buildContent(context: ScreenContext): Component = context.pager(
         getState = { viewModel.state.value }
     )
 
@@ -394,7 +395,7 @@ class SplitDemoScreen : Screen() {
         val leftEntries = state.fruits.map { ListEntry.Item(it) }
         val rightEntries = state.vegetables.map { ListEntry.Item(it) }
 
-        val leftList = context.listView(
+        val leftList = context.list(
             getEntries = { leftEntries },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
@@ -403,7 +404,7 @@ class SplitDemoScreen : Screen() {
             renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
         )
 
-        val rightList = context.listView(
+        val rightList = context.list(
             getEntries = { rightEntries },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
@@ -412,7 +413,7 @@ class SplitDemoScreen : Screen() {
             renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
         )
 
-        return context.splitView(leftList, rightList, leftTitle = "Fruits", rightTitle = "Vegetables")
+        return context.split(leftList, rightList, leftTitle = "Fruits", rightTitle = "Vegetables")
     }
 }
 
@@ -453,7 +454,7 @@ class AsyncDemoScreen : AsyncScreen<FruitReport, AsyncDemoEvent>() {
             add(ListEntry.Header("Loaded in ${data.loadTimeMs} ms"))
             data.fruits.forEach { add(ListEntry.Item(it.name)) }
         }
-        return listView(
+        return list(
             getEntries = { entries },
             renderItem = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
             renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
@@ -531,7 +532,7 @@ class TreeDemoScreen : Screen() {
                 context.requestRedraw()
             }
         }
-        return context.treeView(
+        return context.tree(
             getState = { TreeState(withCallbacks(viewModel.state.value.roots, emptyList())) },
             renderNode = { label, _, focused, _, _ ->
                 if (focused) text(label).inverted() else text(label)
@@ -576,7 +577,7 @@ class TableDemoScreen : Screen() {
 
     override fun buildContent(context: ScreenContext): Component {
         this.navigator = context.navigator
-        return context.tableView(
+        return context.table(
             getRows = { FRUIT_ROWS },
             columns = listOf(
                 TableColumn("Name", extract = { it.name }),

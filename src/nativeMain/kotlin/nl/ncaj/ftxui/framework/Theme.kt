@@ -54,7 +54,7 @@ open class ThemeColors(
 // ---------------------------------------------------------------------------
 
 /**
- * Controls how items are rendered in [ListView] and related list-based views.
+ * Controls how items are rendered in [List] and related list-based views.
  */
 data class ListStyle(
     val focusedItemForeground: Color? = null,
@@ -65,7 +65,7 @@ data class ListStyle(
 )
 
 /**
- * Controls how rows and headers are rendered in [TableView].
+ * Controls how rows and headers are rendered in [Table].
  */
 data class TableStyle(
     val headerForeground: Color? = null,
@@ -77,7 +77,7 @@ data class TableStyle(
 )
 
 /**
- * Controls how nodes are rendered in [TreeView].
+ * Controls how nodes are rendered in [Tree].
  */
 data class TreeStyle(
     val focusedNodeForeground: Color? = null,
@@ -89,7 +89,7 @@ data class TreeStyle(
 )
 
 /**
- * Controls how the two panes and their titles are rendered in [SplitView].
+ * Controls how the two panes and their titles are rendered in [Split].
  */
 data class SplitStyle(
     val activeTitleForeground: Color? = null,
@@ -99,7 +99,7 @@ data class SplitStyle(
 )
 
 /**
- * Controls how cells and their titles are rendered in [DashboardView].
+ * Controls how cells and their titles are rendered in [Dashboard].
  */
 data class DashboardStyle(
     val focusedTitleForeground: Color? = null,
@@ -109,7 +109,7 @@ data class DashboardStyle(
 )
 
 /**
- * Controls the pager view's search highlight and status text.
+ * Controls the pager's search highlight and status text.
  */
 data class PagerStyle(
     val searchHighlight: Color? = null,
