@@ -1,5 +1,6 @@
 package nl.ncaj.ftxui.framework
 
+import kotlinx.coroutines.CoroutineScope
 import nl.ncaj.ftxui.Component
 import kotlin.time.Duration
 
@@ -29,4 +30,20 @@ class Navigator internal constructor(private val app: App) {
     fun removeShortcutsForComponent(component: Component) {
         shortcutsMap.remove(component)
     }
+
+    /**
+     * Returns a [CoroutineScope] tied to [component]'s lifetime on the navigation stack.
+     * The scope is cancelled when the component is popped (or when the app exits), making
+     * it the right place to collect ViewModel state from screen builders.
+     */
+    fun scopeFor(component: Component): CoroutineScope = app.scopeFor(component)
+
+    /**
+     * Registers a callback invoked with `true` when [component] becomes the top of the
+     * navigation stack and `false` when it is covered by a push or removed by a pop.
+     * Use it to pause background work (polling, refresh loops) while a screen is hidden.
+     * The registration is removed automatically when the component is popped.
+     */
+    fun onTopChanged(component: Component, callback: (visible: Boolean) -> Unit) =
+        app.registerOnTopChanged(component, callback)
 }

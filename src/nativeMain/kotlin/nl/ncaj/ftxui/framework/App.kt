@@ -75,6 +75,9 @@ internal class App(
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+    private val componentScopes = mutableMapOf<Component, CoroutineScope>()
+    private val topChangedCallbacks = mutableMapOf<Component, (Boolean) -> Unit>()
+
     private val stack = ArrayDeque<ComponentEntry>()
     private val tabSelector = IntState(0)
     private val tabContainer = tab(tabSelector)
@@ -336,11 +339,20 @@ internal class App(
         return body.window(text(" Keyboard Shortcuts ").bold()).clearUnder().hcenter().vcenter()
     }
 
+    internal fun scopeFor(component: Component): CoroutineScope =
+        componentScopes.getOrPut(component) { CoroutineScope(Dispatchers.Default + SupervisorJob()) }
+
+    internal fun registerOnTopChanged(component: Component, callback: (Boolean) -> Unit) {
+        topChangedCallbacks[component] = callback
+    }
+
     internal fun push(component: Component) {
+        stack.lastOrNull()?.let { topChangedCallbacks[it.component]?.invoke(false) }
         tabContainer.add(component)
         val index = totalComponentsAdded++
         stack.addLast(ComponentEntry(component, index))
         tabSelector.value = index
+        topChangedCallbacks[component]?.invoke(true)
         app.requestAnimationFrame()
     }
 
@@ -348,10 +360,13 @@ internal class App(
         if (stack.isEmpty()) return
         val entry = stack.removeLast()
         context.navigator.removeShortcutsForComponent(entry.component)
+        topChangedCallbacks.remove(entry.component)?.invoke(false)
+        componentScopes.remove(entry.component)?.cancel()
         if (stack.isEmpty()) {
             app.exit()
         } else {
             tabSelector.value = stack.last().tabIndex
+            topChangedCallbacks[stack.last().component]?.invoke(true)
             app.requestAnimationFrame()
         }
     }
@@ -395,6 +410,8 @@ internal class App(
         val root = createRootComponent()
         app.loop(root)
         context.preferences.save()
+        componentScopes.values.forEach { it.cancel() }
+        componentScopes.clear()
         scope.cancel()
     }
 }
