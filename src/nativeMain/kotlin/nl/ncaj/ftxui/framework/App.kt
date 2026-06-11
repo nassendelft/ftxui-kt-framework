@@ -5,25 +5,59 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nl.ncaj.ftxui.*
 import kotlin.concurrent.Volatile
+import kotlin.reflect.KProperty
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 
+data class Dimension(val width: Int, val height: Int)
+
+interface AppContext {
+    val preferences: Preferences
+    fun requestRedraw()
+
+    /** Runs [action] on the UI loop after the current frame has been drawn. */
+    fun post(action: () -> Unit)
+    val terminalSize: Dimension
+}
+
+class MutableState<T>(
+    private var internalValue: T,
+    private val onStateChange: (T) -> Unit
+) {
+    operator fun getValue(thisRef: Any?, property: KProperty<*>) = internalValue
+
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+        if (internalValue != value) {
+            internalValue = value
+            onStateChange(value)
+        }
+    }
+}
+
+fun <T> FtxUIApp.mutableStateOf(initial: T): MutableState<T> =
+    MutableState(initial) { requestAnimationFrame() }
+
+fun <T> AppContext.mutableStateOf(initial: T): MutableState<T> =
+    MutableState(initial) { requestRedraw() }
+
 fun runApp(
+    name: String,
     initialScreen: Screen,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
 ) {
     val app = FtxUIApp.fullscreen()
     if (enableCtrlZ) app.forceHandleCtrlZ(false)
-    val runner = AppRunner(app, confirmOnQuit = confirmOnQuit)
+    val runner = AppRunner(name, app, confirmOnQuit = confirmOnQuit)
     runner.start(initialScreen)
 }
 
 internal class AppRunner(
+    name: String,
     app: FtxUIApp,
     confirmOnQuit: Boolean = false,
-) : BaseAppRunner(app, confirmOnQuit), Navigator {
+) : BaseAppRunner(name, app, confirmOnQuit), Navigator {
 
     private class ScreenEntry(val screen: Screen, val component: Component, val tabIndex: Int)
     private class ToastData(val toast: Toast, @Volatile var progress: Float = 0f)
@@ -79,13 +113,7 @@ internal class AppRunner(
         currentScreen?.handleInput(event, this) ?: false
 
     override fun push(screen: Screen) {
-        val context = object : ScreenContext {
-            override val navigator: Navigator get() = this@AppRunner
-            override fun requestRedraw() {
-                app.requestAnimationFrame()
-            }
-        }
-        val component = screen.build(context)
+        val component = screen.build(this, this)
         tabContainer.add(component)
         val index = totalComponentsAdded++
         stack.addLast(ScreenEntry(screen, component, index))
@@ -138,11 +166,11 @@ internal class AppRunner(
     }
 
     fun start(initialScreen: Screen) {
-        if (confirmOnQuit) app.forceHandleCtrlC(false)
+        app.forceHandleCtrlC(!confirmOnQuit)
         push(initialScreen)
         val root = createRootComponent()
         app.loop(root)
-        Preferences.save()
+        preferences.save()
         scope.cancel()
     }
 }

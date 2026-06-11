@@ -4,35 +4,64 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import nl.ncaj.ftxui.*
-import kotlin.concurrent.Volatile
-import kotlin.time.TimeSource
 
 internal abstract class BaseAppRunner(
+    protected val name: String,
     protected val app: FtxUIApp,
     protected val confirmOnQuit: Boolean,
-) {
+) : AppContext {
     protected val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    private val logPanel = LogPanel(scope) { app.requestAnimationFrame() }
-    private val notifPanel = NotificationPanel(scope, { app.requestAnimationFrame() }) { activeNotificationLog() }
+    override val preferences = Preferences(name)
 
-    @Volatile
-    protected var showHelp: Boolean = false
-    @Volatile
-    protected var showPalette: Boolean = false
-    @Volatile
-    protected var paletteQuery: String = ""
-    @Volatile
-    protected var paletteCursor: Int = 0
+    override fun requestRedraw() = app.requestAnimationFrame()
+    override fun post(action: () -> Unit) = app.post(action)
 
-    @Volatile
-    protected var showPerfOverlay: Boolean = false
-    @Volatile
-    protected var avgFrameMs: Float = 0f
-    protected var lastFrameMark: TimeSource.Monotonic.ValueTimeMark? = null
+    override val terminalSize: Dimension get() = Dimension(Terminal.size().dimx, Terminal.size().dimy)
 
-    @Volatile
-    protected var confirmingQuit: Boolean = false
+    protected var showHelp by mutableStateOf(false)
+    protected var showPalette by mutableStateOf(false)
+    protected var showPerfOverlay by mutableStateOf(false)
+    protected var confirmingQuit by mutableStateOf(false)
+
+    internal var logPanelOpen by mutableStateOf(false)
+    internal var notificationPanelOpen by mutableStateOf(false)
+
+    protected val logPanel by lazy {
+        logPanel(
+            isOpen = { logPanelOpen },
+            onToggle = { open ->
+                logPanelOpen = open
+                if (!open) restoreFocus()
+            }
+        )
+    }
+    protected val notificationPanel by lazy {
+        notificationPanel(
+            isOpen = { notificationPanelOpen },
+            onToggle = { open ->
+                notificationPanelOpen = open
+                if (!open) restoreFocus()
+            },
+            getLog = ::activeNotificationLog
+        )
+    }
+    protected val palettePanel by lazy {
+        commandPalette(
+            isOpen = { showPalette },
+            onToggle = { open ->
+                showPalette = open
+                if (!open) restoreFocus()
+            },
+            getShortcuts = { activeScreen()?.globalShortcuts ?: emptyList() }
+        )
+    }
+    protected val perfPanel by lazy {
+        perfOverlay(
+            isVisible = { showPerfOverlay },
+            getExtraLines = ::extraPerfLines
+        )
+    }
 
     protected abstract fun buildContentElement(): Element
     protected abstract fun buildActiveToastsElement(): Element?
@@ -47,34 +76,48 @@ internal abstract class BaseAppRunner(
     protected open fun extraHelpRows(): List<Element> = emptyList()
     protected open fun handleExtraInput(event: FtxUIEvent): Boolean = false
 
-    protected abstract fun getScreenContainer(): Component
+    internal abstract fun getScreenContainer(): Component
 
-    protected fun createRootComponent() = renderer(child = getScreenContainer()) {
-        measureFrame()
-        var el = buildContentElement()
-        buildActiveToastsElement()?.let { el = dbox(el, it) }
-        val anyModal = isDialogActive() || showHelp || showPalette ||
-                logPanel.progress > 0f || notifPanel.progress > 0f || confirmingQuit
-        if (anyModal) el = el.dim()
-        buildActiveDialogElement()?.let { el = dbox(el, it) }
-        if (confirmingQuit) el = dbox(el, buildConfirmQuitElement())
-        if (showHelp) el = dbox(el, buildHelpElement())
-        if (showPalette) el = dbox(el, buildPaletteElement())
-        notifPanel.buildElement()?.let { el = dbox(el, it) }
-        logPanel.buildElement()?.let { el = dbox(el, it) }
-        if (showPerfOverlay) el = dbox(el, buildPerfOverlayElement())
-        el
-    }.catchEvent { event -> handleEvent(event) }
+    protected fun restoreFocus() {
+        activeScreen()?.activeWindow?.takeFocus() ?: getScreenContainer().takeFocus()
+    }
+
+    protected fun createRootComponent(): Component {
+        val rootContainer = stacked()
+        rootContainer.add(getScreenContainer())
+        rootContainer.add(logPanel.maybe { logPanelOpen })
+        rootContainer.add(notificationPanel.maybe { notificationPanelOpen })
+        rootContainer.add(palettePanel.maybe { showPalette })
+        rootContainer.add(perfPanel.maybe { showPerfOverlay })
+        return renderer(child = rootContainer) {
+            var el = getScreenContainer().render()
+            buildActiveToastsElement()?.let { el = dbox(el, it) }
+            val anyModal = isDialogActive() || showHelp || showPalette ||
+                    logPanelOpen || notificationPanelOpen || confirmingQuit
+            if (anyModal) el = el.dim()
+            buildActiveDialogElement()?.let { el = dbox(el, it) }
+            if (confirmingQuit) el = dbox(el, buildConfirmQuitElement())
+            if (showHelp) el = dbox(el, buildHelpElement())
+            if (showPalette) el = dbox(el, palettePanel.render())
+            if (logPanelOpen) el = dbox(el, logPanel.render())
+            if (notificationPanelOpen) el = dbox(el, notificationPanel.render())
+            if (showPerfOverlay) el = dbox(el, perfPanel.render())
+            el
+        }.catchEvent { event ->
+            val anyModalExceptPanels = isDialogActive() || showHelp || confirmingQuit
+            if (anyModalExceptPanels) {
+                handleEvent(event)
+            } else {
+                false
+            }
+        }.postCatchEvent { event -> handleEvent(event) }
+    }
 
     private fun handleEvent(event: FtxUIEvent): Boolean = when {
         isDialogActive() -> handleActiveDialogInput(event)
-        logPanel.isOpen -> logPanel.handleInput(event)
-        notifPanel.isOpen -> notifPanel.handleInput(event)
-        showPalette -> handlePaletteInput(event)
         showHelp -> {
             if (event.isKey(Key.Escape) || event.isKey(Key.Return) || isChar(event, "?")) {
                 showHelp = false
-                app.requestAnimationFrame()
             }
             true
         }
@@ -86,7 +129,7 @@ internal abstract class BaseAppRunner(
                 }
 
                 else -> {
-                    confirmingQuit = false; app.requestAnimationFrame()
+                    confirmingQuit = false
                 }
             }
             true
@@ -94,123 +137,55 @@ internal abstract class BaseAppRunner(
 
         else -> {
             if (handleExtraInput(event)) return true
-            val handled = handleScreenInput(event)
+            val handled = if (logPanelOpen || notificationPanelOpen) false else handleScreenInput(event)
             when {
                 !handled && confirmOnQuit && event.isKey(Key.CtrlC) -> {
-                    confirmingQuit = true; app.requestAnimationFrame(); true
+                    confirmingQuit = true; true
                 }
 
                 !handled && event.isKey(Key.CtrlAltP) -> {
-                    showPerfOverlay = !showPerfOverlay; app.requestAnimationFrame(); true
+                    showPerfOverlay = !showPerfOverlay; true
                 }
 
                 !handled && isChar(event, "?") -> {
-                    showHelp = true; app.requestAnimationFrame(); true
+                    showHelp = true; true
                 }
 
                 !handled && event.isKey(Key.CtrlP) -> {
-                    showPalette = true; paletteQuery = ""; paletteCursor = 0
-                    app.requestAnimationFrame(); true
+                    showPalette = !showPalette
+                    if (showPalette) {
+                        palettePanel.takeFocus()
+                    } else {
+                        restoreFocus()
+                    }
+                    true
                 }
 
                 !handled && event.isKey(Key.CtrlN) -> {
-                    notifPanel.open(); true
+                    notificationPanelOpen = !notificationPanelOpen
+                    if (notificationPanelOpen) {
+                        logPanelOpen = false
+                        notificationPanel.takeFocus()
+                    } else {
+                        restoreFocus()
+                    }
+                    true
                 }
 
                 !handled && event.isKey(Key.CtrlL) -> {
-                    if (logPanel.isOpen) logPanel.close() else logPanel.open(); true
+                    logPanelOpen = !logPanelOpen
+                    if (logPanelOpen) {
+                        notificationPanelOpen = false
+                        logPanel.takeFocus()
+                    } else {
+                        restoreFocus()
+                    }
+                    true
                 }
 
                 else -> handled
             }
         }
-    }
-
-    protected fun measureFrame() {
-        val now = TimeSource.Monotonic.markNow()
-        val prev = lastFrameMark
-        if (prev != null) {
-            val ms = prev.elapsedNow().inWholeMicroseconds / 1000f
-            avgFrameMs = avgFrameMs * 0.9f + ms * 0.1f
-        }
-        lastFrameMark = now
-    }
-
-    private fun paletteItems(): List<Shortcut> {
-        val shortcuts = activeScreen()?.globalShortcuts ?: emptyList()
-        if (paletteQuery.isEmpty()) return shortcuts
-        val q = paletteQuery.lowercase()
-        return shortcuts.filter { it.label.lowercase().contains(q) || it.description.lowercase().contains(q) }
-    }
-
-    private fun handlePaletteInput(event: FtxUIEvent): Boolean {
-        val items = paletteItems()
-        when {
-            event.isKey(Key.Escape) -> {
-                showPalette = false; app.requestAnimationFrame()
-            }
-
-            event.isKey(Key.Return) -> {
-                items.getOrNull(paletteCursor)?.action?.invoke()
-                showPalette = false
-                app.requestAnimationFrame()
-            }
-
-            event.isKey(Key.ArrowUp) -> {
-                paletteCursor = (paletteCursor - 1).coerceAtLeast(0)
-                app.requestAnimationFrame()
-            }
-
-            event.isKey(Key.ArrowDown) -> {
-                paletteCursor = (paletteCursor + 1).coerceAtMost(maxOf(0, items.lastIndex))
-                app.requestAnimationFrame()
-            }
-
-            event.isKey(Key.Backspace) -> {
-                if (paletteQuery.isNotEmpty()) {
-                    paletteQuery = paletteQuery.dropLast(1)
-                    paletteCursor = 0
-                    app.requestAnimationFrame()
-                }
-            }
-
-            event is FtxUIEvent.Character -> {
-                paletteQuery += event.character
-                paletteCursor = 0
-                app.requestAnimationFrame()
-            }
-        }
-        return true
-    }
-
-    private fun buildPaletteElement(): Element {
-        val items = paletteItems()
-        val maxVisible = 8
-        val labelWidth = (items.take(maxVisible).maxOfOrNull { it.label.length } ?: 8).coerceAtLeast(8)
-        val queryEl = hbox(
-            text("> ").color(Theme.current.accent).bold(),
-            text(paletteQuery),
-            text("█").color(Theme.current.accent),
-        )
-        val rows: List<Element> = if (items.isEmpty()) {
-            listOf(hbox(text("  "), text("No matching commands").color(Theme.current.warning).dim(), text("  ")))
-        } else {
-            items.take(maxVisible).mapIndexed { i, sc ->
-                val focused = i == paletteCursor
-                if (focused) {
-                    hbox(
-                        text(" ▶ ").color(Theme.current.accent).bold(),
-                        text(sc.label.padEnd(labelWidth) + "  ").color(Theme.current.accent).bold(),
-                        text(sc.description).dim(),
-                        text("  "),
-                    )
-                } else {
-                    hbox(text("   "), text(sc.label.padEnd(labelWidth) + "  "), text(sc.description), text("  ")).dim()
-                }
-            }
-        }
-        val body = vbox(hbox(text("  "), queryEl, text("  ")), separator(), *rows.toTypedArray(), text(""))
-        return body.window(text(" Commands ").color(Theme.current.accent).bold()).clearUnder().hcenter().vcenter()
     }
 
     private fun buildConfirmQuitElement(): Element {
@@ -248,83 +223,10 @@ internal abstract class BaseAppRunner(
         return body.window(text(" Keyboard Shortcuts ").bold()).clearUnder().hcenter().vcenter()
     }
 
-    private fun buildPerfOverlayElement(): Element {
-        val fps = if (avgFrameMs > 0) (1000f / avgFrameMs).toInt() else 0
-        val termSize = Terminal.size()
-        val frameInt = (avgFrameMs * 10).toInt()
-        val lines = buildList {
-            add("FPS:   $fps")
-            add("Frame: ${frameInt / 10}.${frameInt % 10}ms")
-            addAll(extraPerfLines())
-            add("Term:  ${termSize.dimx}×${termSize.dimy}")
-        }
-        val body = vbox(*lines.map { hbox(text("  $it  ")) }.toTypedArray())
-        return hbox(filler(), body.window(text(" perf ").dim()).clearUnder(), text(" "))
-    }
 }
 
 internal fun isChar(event: FtxUIEvent, char: String) =
     event is FtxUIEvent.Character && event.character == char
-
-internal fun vScrollBar(
-    scrollY: Int,
-    total: Int,
-    visible: Int,
-    thumbColor: Color = Theme.current.scrollThumb
-): Element {
-    if (total <= visible) return vbox(*(0 until maxOf(1, visible)).map { text(" ") }.toTypedArray())
-    val thumbH = maxOf(1, visible * visible / total)
-    val thumbY = ((scrollY.toLong() * maxOf(0, visible - thumbH)) / maxOf(1, total - visible)).toInt()
-    return vbox(*(0 until visible).map { i ->
-        if (i in thumbY until thumbY + thumbH) text("▐").color(thumbColor) else text("▕").dim()
-    }.toTypedArray())
-}
-
-internal fun buildToastPill(toast: Toast, progress: Float): Element {
-    val (icon, color) = when (toast.type) {
-        Toast.Type.Info -> "ℹ" to Theme.current.info
-        Toast.Type.Success -> "✓" to Theme.current.success
-        Toast.Type.Warning -> "⚠" to Theme.current.warning
-        Toast.Type.Error -> "✗" to Theme.current.error
-    }
-    val innerWidth = 5 + toast.message.length + 2
-    val boxW = innerWidth + 2
-    val totalPerim = 2 * boxW + 2
-    val dimColor = Color.GrayDark
-    val transitionWidth = 5f
-    val stripe = totalPerim * 0.30f
-    val frontier = progress * (totalPerim + stripe)
-
-    fun borderEl(pos: Int, thickChar: String, medChar: String, thinChar: String): Element {
-        val distA = pos - frontier
-        val distB = pos - (frontier - stripe)
-        val t = ((-distA / transitionWidth) + 0.5f).coerceIn(0f, 1f)
-        val blended = Color.interpolate(t, color, dimColor)
-        val char = when {
-            distA > 0f -> thickChar; distB > 0f -> medChar; else -> thinChar
-        }
-        return text(char).color(blended)
-    }
-
-    val topElements = buildList {
-        add(borderEl(0, "╔", "┏", "╭"))
-        for (col in 1 until boxW - 1) add(borderEl(col, "═", "━", "─"))
-        add(borderEl(boxW - 1, "╗", "┓", "╮"))
-    }
-    val leftEl = borderEl(2 * boxW + 1, "║", "┃", "│")
-    val rightEl = borderEl(boxW, "║", "┃", "│")
-    val contentEl = hbox(text("  $icon  ").color(color), text(toast.message), text("  "))
-    val bottomElements = buildList {
-        add(borderEl(2 * boxW, "╚", "┗", "╰"))
-        for (col in 1 until boxW - 1) add(borderEl(2 * boxW - col, "═", "━", "─"))
-        add(borderEl(boxW + 1, "╝", "┛", "╯"))
-    }
-    return vbox(
-        hbox(*topElements.toTypedArray()),
-        hbox(leftEl, contentEl, rightEl),
-        hbox(*bottomElements.toTypedArray()),
-    ).clearUnder()
-}
 
 internal fun buildSharedDialogElement(dialog: Dialog, promptInput: String): Element {
     val (icon, iconColor) = when (dialog) {
@@ -393,26 +295,37 @@ internal fun handleSharedDialogInput(
     when (dialog) {
         is Dialog.Alert ->
             if (event.isKey(Key.Return) || event.isKey(Key.Escape)) {
-                dialog.onDismiss(); dismiss()
+                val onDismiss = dialog.onDismiss
+                dismiss()
+                onDismiss()
             }
 
         is Dialog.Confirm -> when {
             event.isKey(Key.Return) || isChar(event, "y") || isChar(event, "Y") -> {
-                dialog.onConfirm(); dismiss()
+                val onConfirm = dialog.onConfirm
+                dismiss()
+                onConfirm()
             }
 
             event.isKey(Key.Escape) || isChar(event, "n") || isChar(event, "N") -> {
-                dialog.onCancel(); dismiss()
+                val onCancel = dialog.onCancel
+                dismiss()
+                onCancel()
             }
         }
 
         is Dialog.Prompt -> when {
             event.isKey(Key.Return) -> {
-                dialog.onSubmit(getPromptInput()); dismiss()
+                val onSubmit = dialog.onSubmit
+                val input = getPromptInput()
+                dismiss()
+                onSubmit(input)
             }
 
             event.isKey(Key.Escape) -> {
-                dialog.onCancel(); dismiss()
+                val onCancel = dialog.onCancel
+                dismiss()
+                onCancel()
             }
 
             event.isKey(Key.Backspace) -> {

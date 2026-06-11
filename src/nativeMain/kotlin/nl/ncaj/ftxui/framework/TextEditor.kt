@@ -11,7 +11,7 @@ data class TextEditorState(
     val scrollOffset: Int = 0
 )
 
-fun ScreenContext.textEditor(
+fun AppContext.textEditor(
     content: KMutableProperty0<String>,
     showLineNumbers: Boolean = true,
     onContentChange: ((String) -> Unit)? = null,
@@ -51,7 +51,8 @@ fun ScreenContext.textEditor(
         if (!suppressHistoryPush) history.push(lines.toList())
     }
 
-    val contentHeight: () -> Int = { Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT }
+    val viewport = viewport()
+    val contentHeight: () -> Int = { viewport.height }
     val pageSize: () -> Int = { maxOf(1, contentHeight() - 2) }
     val currentLine: () -> String = { lines.getOrElse(cursorLine) { "" } }
 
@@ -229,10 +230,10 @@ fun ScreenContext.textEditor(
             } else text(" ")
         }
 
-        hbox(
+        viewport.measure(hbox(
             vbox(*filled.toTypedArray()).flex(),
             vScrollBar(scrollOffset, lines.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
     }
 
     return base.catchEvent { event ->

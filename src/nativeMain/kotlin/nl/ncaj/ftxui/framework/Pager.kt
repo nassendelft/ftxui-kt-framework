@@ -7,18 +7,19 @@ data class PagerState(
     val showLineNumbers: Boolean = false
 )
 
-fun ScreenContext.pager(
+fun AppContext.pager(
     getState: () -> PagerState,
     keybindings: PagerKeybindings = PagerKeybindings(),
-    style: PagerStyle = PagerStyle()
+    style: PagerStyle = PagerStyle(),
 ): Component {
     var scrollOffset by mutableStateOf(0)
     var searching by mutableStateOf(false)
     var searchQuery by mutableStateOf("")
     var matchLines by mutableStateOf(emptyList<Int>())
     var matchIndex by mutableStateOf(0)
+    val viewport = viewport()
 
-    val getContentHeight: () -> Int = { Terminal.size().dimy }
+    val getContentHeight: () -> Int = { viewport.height }
     val maxScroll: () -> Int = { maxOf(0, getState().lines.size - getContentHeight()) }
     val pageSize: () -> Int = { maxOf(1, getContentHeight() - 2) }
 
@@ -68,7 +69,7 @@ fun ScreenContext.pager(
         val state = getState()
         val lines = state.lines
         val hasSearch = searching || searchQuery.isNotEmpty()
-        val contentH = if (hasSearch) maxOf(1, getContentHeight() - 2) else getContentHeight()
+        val contentH = getContentHeight()
         scrollOffset = scrollOffset.coerceIn(0, maxScroll())
 
         val lineNumWidth = if (state.showLineNumbers) lines.size.toString().length else 0
@@ -90,10 +91,10 @@ fun ScreenContext.pager(
             }
         }
 
-        val contentEl = hbox(
+        val contentEl = viewport.measure(hbox(
             vbox(*rows.toTypedArray()).flex(),
             vScrollBar(scrollOffset, lines.size, contentH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
 
         if (!hasSearch) return@focusableRenderer contentEl
 

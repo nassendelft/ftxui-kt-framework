@@ -3,40 +3,16 @@ package nl.ncaj.ftxui.framework
 import nl.ncaj.ftxui.*
 import kotlin.reflect.KProperty
 
-interface ScreenContext {
-    val navigator: Navigator
-    fun requestRedraw()
-}
-
-class MutableState<T>(
-    private var internalValue: T,
-    private val onStateChange: (T) -> Unit
-) {
-    operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
-        return internalValue
-    }
-
-    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
-        if (internalValue != value) {
-            internalValue = value
-            onStateChange(value)
-        }
-    }
-}
-
-fun <T> ScreenContext.mutableStateOf(initial: T): MutableState<T> =
-    MutableState(initial) { _ -> requestRedraw() }
-
 abstract class Screen {
     open val globalShortcuts: List<Shortcut> = emptyList()
     open val activeWindow: Component? get() = null
 
     // Subclasses implement this to build their main content component once.
-    protected abstract fun buildContent(context: ScreenContext): Component
+    protected abstract fun AppContext.buildContent(navigator: Navigator): Component
 
     // Called by the framework — wraps buildContent with the status bar.
-    fun build(context: ScreenContext): Component {
-        val content = buildContent(context)
+    fun build(context: AppContext, navigator: Navigator): Component {
+        val content = context.buildContent(navigator)
         return renderer(child = content) {
             vbox(
                 content.render().flex(),

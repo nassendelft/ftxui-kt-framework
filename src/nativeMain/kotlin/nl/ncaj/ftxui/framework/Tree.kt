@@ -18,15 +18,16 @@ data class TreeState<T>(
 
 private data class FlatItem<T>(val node: TreeNode<T>, val depth: Int, val path: List<Int>)
 
-fun <T> ScreenContext.tree(
+fun <T> AppContext.tree(
     getState: () -> TreeState<T>,
     renderNode: (data: T, depth: Int, focused: Boolean, hasChildren: Boolean, isExpanded: Boolean) -> Element,
     keybindings: TreeKeybindings = TreeKeybindings(),
     style: TreeStyle = TreeStyle(),
-    onSelectionChanged: ((focusedNode: TreeNode<T>?) -> Unit)? = null
+    onSelectionChanged: ((focusedNode: TreeNode<T>?) -> Unit)? = null,
 ): Component {
     var focusedPath by mutableStateOf(emptyList<Int>())
     var scrollOffset by mutableStateOf(0)
+    val viewport = viewport()
 
     val flattenVisible: () -> List<FlatItem<T>> = {
         val result = mutableListOf<FlatItem<T>>()
@@ -51,8 +52,10 @@ fun <T> ScreenContext.tree(
         }
     }
 
+    val getTreeHeight: () -> Int = { viewport.height }
+
     val ensureScrollCoversSelection: (List<FlatItem<T>>) -> Unit = { flat ->
-        val visibleH = Terminal.size().dimy
+        val visibleH = getTreeHeight()
         val fi = flat.indexOfFirst { it.path == focusedPath }
         if (fi >= 0) {
             if (fi < scrollOffset) scrollOffset = fi
@@ -116,7 +119,7 @@ fun <T> ScreenContext.tree(
             return@focusableRenderer emptyElement()
         }
         ensureValidFocus(flat)
-        val visibleH = Terminal.size().dimy
+        val visibleH = getTreeHeight()
         ensureScrollCoversSelection(flat)
 
         val start = scrollOffset.coerceIn(0, flat.size)
@@ -144,10 +147,10 @@ fun <T> ScreenContext.tree(
             } else row
         }
 
-        hbox(
+        viewport.measure(hbox(
             vbox(*rows.toTypedArray()).flex(),
             vScrollBar(scrollOffset, flat.size, visibleH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
     }
 
     return base.catchEvent { event ->

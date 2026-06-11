@@ -44,18 +44,18 @@ abstract class AsyncViewModel<T, E> : ViewModel<AsyncState<T>, E>() {
 abstract class AsyncScreen<T, E> : Screen() {
     abstract val viewModel: AsyncViewModel<T, E>
 
-    final override fun buildContent(context: ScreenContext): Component {
+    final override fun AppContext.buildContent(navigator: Navigator): Component {
         val tabIndex = IntState(0)
         val tabContainer = tab(tabIndex)
 
-        var tick by context.mutableStateOf(0)
+        var tick by mutableStateOf(0)
         val loadingComp = renderer {
             buildLoading(tick).render()
         }
         tabContainer.add(loadingComp)
 
-        var errorMessage by context.mutableStateOf("")
-        var canRetry by context.mutableStateOf(false)
+        var errorMessage by mutableStateOf("")
+        var canRetry by mutableStateOf(false)
         val errorComp = renderer {
             buildError(errorMessage, canRetry).render()
         }
@@ -79,14 +79,14 @@ abstract class AsyncScreen<T, E> : Screen() {
                     is AsyncState.Success -> {
                         if (state.data != lastData || successCount == 0) {
                             lastData = state.data
-                            val loadedComp = with(context) { buildLoaded(state.data) }
+                            val loadedComp = buildLoaded(navigator, state.data)
                             tabContainer.add(loadedComp)
                             successCount++
                         }
                         tabIndex.value = 1 + successCount
                     }
                 }
-                context.requestRedraw()
+                requestRedraw()
             }
         }
 
@@ -103,5 +103,5 @@ abstract class AsyncScreen<T, E> : Screen() {
         vbox(filler(), hbox(filler(), text("✗ $message$hint").color(Theme.current.error), filler()), filler())
     }
 
-    protected abstract fun ScreenContext.buildLoaded(data: T): Component
+    protected abstract fun AppContext.buildLoaded(navigator: Navigator, data: T): Component
 }

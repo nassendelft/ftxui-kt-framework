@@ -24,7 +24,7 @@ data class FilePickerState(
 )
 
 @OptIn(ExperimentalForeignApi::class)
-fun ScreenContext.filePicker(
+fun AppContext.filePicker(
     initialPath: String = ".",
     onFileSelected: (String) -> Unit = {},
     showHiddenInitially: Boolean = false,
@@ -56,11 +56,12 @@ fun ScreenContext.filePicker(
         }
     }
 
-    val getVisibleHeight: () -> Int = { Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT }
-    val pageSize: () -> Int = { maxOf(1, getVisibleHeight() - 4) }
+    val viewport = viewport()
+    val getListHeight: () -> Int = { maxOf(1, viewport.height) }
+    val pageSize: () -> Int = { maxOf(1, getListHeight() - 2) }
 
     val ensureScrollCoversSelection: () -> Unit = {
-        val listH = getVisibleHeight() - 2
+        val listH = getListHeight()
         val visible = visibleEntries()
         if (selectedIndex < scrollOffset) scrollOffset = selectedIndex
         if (selectedIndex >= scrollOffset + listH) scrollOffset = selectedIndex - listH + 1
@@ -125,10 +126,7 @@ fun ScreenContext.filePicker(
 
     val base = focusableRenderer { focused ->
         val visible = visibleEntries()
-        val visH = getVisibleHeight()
-        val headerLines = 2
-        val footerLines = if (filtering) 2 else 0
-        val listH = maxOf(1, visH - headerLines - footerLines)
+        val listH = getListHeight()
 
         ensureScrollCoversSelection()
         val start = scrollOffset.coerceIn(0, visible.size)
@@ -152,10 +150,10 @@ fun ScreenContext.filePicker(
             text("  "),
         )
 
-        val listRow = hbox(
+        val listRow = viewport.measure(hbox(
             vbox(*rows.toTypedArray()).flex(),
             vScrollBar(scrollOffset, visible.size, listH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
 
         val main = vbox(pathEl, separator(), listRow)
 
@@ -185,8 +183,36 @@ fun ScreenContext.filePicker(
             when {
                 event.matches(keybindings.moveUpKeys, keybindings.moveUpChars)  -> { moveUp(1); true }
                 event.matches(keybindings.moveDownKeys, keybindings.moveDownChars) -> { moveDown(1); true }
-                event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> { moveUp(pageSize()); true }
-                event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> { moveDown(pageSize()); true }
+                event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> {
+                    val count = pageSize()
+                    val visible = visibleEntries()
+                    if (selectedIndex >= 0 && visible.isNotEmpty()) {
+                        val relOffset = selectedIndex - scrollOffset
+                        val targetScroll = (scrollOffset - count).coerceIn(0, maxOf(0, visible.size - getListHeight()))
+                        selectedIndex = if (targetScroll == scrollOffset) {
+                            0
+                        } else {
+                            (targetScroll + relOffset).coerceIn(0, visible.lastIndex)
+                        }
+                        scrollOffset = targetScroll
+                    }
+                    true
+                }
+                event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> {
+                    val count = pageSize()
+                    val visible = visibleEntries()
+                    if (selectedIndex >= 0 && visible.isNotEmpty()) {
+                        val relOffset = selectedIndex - scrollOffset
+                        val targetScroll = (scrollOffset + count).coerceIn(0, maxOf(0, visible.size - getListHeight()))
+                        selectedIndex = if (targetScroll == scrollOffset) {
+                            visible.lastIndex
+                        } else {
+                            (targetScroll + relOffset).coerceIn(0, visible.lastIndex)
+                        }
+                        scrollOffset = targetScroll
+                    }
+                    true
+                }
                 event.matches(keybindings.homeKeys, keybindings.homeChars)  -> { selectedIndex = 0; ensureScrollCoversSelection(); true }
                 event.matches(keybindings.endKeys, keybindings.endChars)  -> { selectedIndex = visibleEntries().lastIndex; ensureScrollCoversSelection(); true }
                 event.matches(keybindings.selectKeys, keybindings.selectChars) -> { onEnter(); true }

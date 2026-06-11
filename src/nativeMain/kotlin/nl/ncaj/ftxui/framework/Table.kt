@@ -9,20 +9,21 @@ data class TableColumn<T>(
     val renderCell: ((item: T, width: Int, focused: Boolean) -> Element)? = null,
 )
 
-fun <T> ScreenContext.table(
+fun <T> AppContext.table(
     getRows: () -> List<T>,
     columns: List<TableColumn<T>>,
     onEnter: ((T) -> Unit)? = null,
     onSelectionChanged: ((focusedItem: T?) -> Unit)? = null,
     keybindings: TableKeybindings = TableKeybindings(),
-    style: TableStyle = TableStyle()
+    style: TableStyle = TableStyle(),
 ): Component {
     var focusedRow by mutableStateOf(0)
     var scrollOffset by mutableStateOf(0)
     var sortColumn by mutableStateOf(null as Int?)
     var sortAscending by mutableStateOf(true)
+    val viewport = viewport()
 
-    val pageSize: () -> Int = { maxOf(1, Terminal.size().dimy - 2) }
+    val pageSize: () -> Int = { maxOf(1, viewport.height) }
     val maxScroll: (Int, Int) -> Int = { total, visH -> maxOf(0, total - visH) }
 
     val sortedRows: () -> List<T> = {
@@ -105,10 +106,10 @@ fun <T> ScreenContext.table(
         }
 
         val emptyRows = (0 until visH - slice.size).map { text("") }
-        val dataEl = hbox(
+        val dataEl = viewport.measure(hbox(
             vbox(*dataRows.toTypedArray(), *emptyRows.toTypedArray()).flex(),
             vScrollBar(scrollOffset, rows.size, visH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
 
         vbox(headerEl, separator(), dataEl)
     }
@@ -148,15 +149,33 @@ fun <T> ScreenContext.table(
                 true
             }
             event.matches(keybindings.pageUpKeys, keybindings.pageUpChars) -> {
-                focusedRow = (focusedRow - visH / 2).coerceIn(0, last)
-                ensureScrollCoversSelection()
-                onSelectionChanged?.invoke(rows.getOrNull(focusedRow))
+                if (rows.isNotEmpty()) {
+                    val count = visH / 2
+                    val relOffset = focusedRow - scrollOffset
+                    val targetScroll = (scrollOffset - count).coerceIn(0, maxScroll(rows.size, visH))
+                    focusedRow = if (targetScroll == scrollOffset) {
+                        0
+                    } else {
+                        (targetScroll + relOffset).coerceIn(0, last)
+                    }
+                    scrollOffset = targetScroll
+                    onSelectionChanged?.invoke(rows.getOrNull(focusedRow))
+                }
                 true
             }
             event.matches(keybindings.pageDownKeys, keybindings.pageDownChars) -> {
-                focusedRow = (focusedRow + visH / 2).coerceIn(0, last)
-                ensureScrollCoversSelection()
-                onSelectionChanged?.invoke(rows.getOrNull(focusedRow))
+                if (rows.isNotEmpty()) {
+                    val count = visH / 2
+                    val relOffset = focusedRow - scrollOffset
+                    val targetScroll = (scrollOffset + count).coerceIn(0, maxScroll(rows.size, visH))
+                    focusedRow = if (targetScroll == scrollOffset) {
+                        last
+                    } else {
+                        (targetScroll + relOffset).coerceIn(0, last)
+                    }
+                    scrollOffset = targetScroll
+                    onSelectionChanged?.invoke(rows.getOrNull(focusedRow))
+                }
                 true
             }
             event.matches(keybindings.selectKeys, keybindings.selectChars) && onEnter != null -> {

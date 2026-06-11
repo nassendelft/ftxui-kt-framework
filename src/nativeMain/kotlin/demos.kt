@@ -25,8 +25,9 @@ class TextEditorDemoScreen : Screen() {
         },
     )
 
-    override fun buildContent(context: ScreenContext): Component {
-        editorComponent = context.textEditor(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@TextEditorDemoScreen.navigator = navigator
+        editorComponent = textEditor(
             content = ::editorText,
             showLineNumbers = true,
             onContentChange = { text ->
@@ -34,7 +35,7 @@ class TextEditorDemoScreen : Screen() {
             },
             onStateChange = { newState ->
                 editorState = newState
-                context.requestRedraw()
+                requestRedraw()
             }
         )
         return editorComponent
@@ -79,12 +80,13 @@ class FilePickerDemoScreen : Screen() {
 
     override val activeWindow get() = pickerComponent
 
-    override fun buildContent(context: ScreenContext): Component {
-        pickerComponent = context.filePicker(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@FilePickerDemoScreen.navigator = navigator
+        pickerComponent = filePicker(
             initialPath = ".",
             onFileSelected = { path ->
-                navigator?.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
-                navigator?.pop()
+                navigator.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
+                navigator.pop()
             }
         )
         return pickerComponent
@@ -105,25 +107,25 @@ class DashboardDemoScreen : Screen() {
 
     override val activeWindow get() = dashboardComponent
 
-    override fun buildContent(context: ScreenContext): Component {
+    override fun AppContext.buildContent(navigator: Navigator): Component {
         val fruits = listOf("Apple", "Banana", "Cherry", "Dragon Fruit", "Elderberry", "Fig")
             .map { ListEntry.Item(it) }
-        val fruitList = context.list(
+        val fruitList = list(
             getEntries = { fruits },
             renderItem = { name, focused ->
                 if (focused) text("  $name").inverted() else text("  $name")
             },
-            renderHeader = { name -> hbox(text("  $name").bold(), filler()) }
+            renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
         )
 
         val veggies = listOf("Artichoke", "Broccoli", "Carrot", "Daikon", "Eggplant")
             .map { ListEntry.Item(it) }
-        val vegList = context.list(
+        val vegList = list(
             getEntries = { veggies },
             renderItem = { name, focused ->
                 if (focused) text("  $name").inverted() else text("  $name")
             },
-            renderHeader = { name -> hbox(text("  $name").bold(), filler()) }
+            renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
         )
 
         val pagerState = PagerState(listOf(
@@ -132,9 +134,10 @@ class DashboardDemoScreen : Screen() {
             "Tab / Shift+Tab cycles focus.",
             "Focused cell receives key input.",
             "Each cell wraps any Window type.",
+            "Stats cell is custom-drawn.",
         ))
-        val pager = context.pager(
-            getState = { pagerState }
+        val pager = pager(
+            getState = { pagerState },
         )
 
         val stats = renderer {
@@ -146,7 +149,7 @@ class DashboardDemoScreen : Screen() {
             )
         }
 
-        dashboardComponent = context.dashboard(
+        dashboardComponent = dashboard(
             columns = 2,
             cells = listOf(
                 DashboardCell(
@@ -181,8 +184,9 @@ class PaginatedListDemoScreen : Screen() {
 
     override val activeWindow get() = pagedList
 
-    override fun buildContent(context: ScreenContext): Component {
-        pagedList = context.paginatedList(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@PaginatedListDemoScreen.navigator = navigator
+        pagedList = paginatedList(
             pageSize = 25,
             loadThreshold = 5,
             loadPage = { offset, limit ->
@@ -196,7 +200,7 @@ class PaginatedListDemoScreen : Screen() {
                 if (focused) text("  $name").inverted() else text("  $name")
             },
             renderHeader = { name -> hbox(text("  $name").bold(), filler()) },
-            onSelect = { item -> navigator?.notify("Selected: ${item.data}", Toast.SHORT) },
+            onSelect = { item -> navigator.notify("Selected: ${item.data}", Toast.SHORT) },
             onTotalCount = { 200 },
         )
         return pagedList
@@ -290,13 +294,14 @@ class StepProgressDemoScreen : Screen() {
 
     override val activeWindow get() = progressComponent
 
-    override fun buildContent(context: ScreenContext): Component {
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@StepProgressDemoScreen.navigator = navigator
         GlobalScope.launch {
             viewModel.state.collect {
-                context.requestRedraw()
+                requestRedraw()
             }
         }
-        progressComponent = context.stepProgress(
+        progressComponent = stepProgress(
             getState = { viewModel.state.value }
         )
         return progressComponent
@@ -324,8 +329,10 @@ class ResponsiveDemoScreen : Screen() {
 
     override val activeWindow get() = if (Terminal.size().dimx >= 100) split else leftList
 
-    override fun buildContent(context: ScreenContext): Component {
-        leftList = context.list(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@ResponsiveDemoScreen.navigator = navigator
+        val isWide = { Terminal.size().dimx >= 100 }
+        leftList = list(
             getEntries = { items },
             renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
             renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
@@ -333,15 +340,15 @@ class ResponsiveDemoScreen : Screen() {
                 val entry = items.getOrNull(idx)
                 selectedItemName = entry?.data ?: "none"
                 detailState = PagerState(getDetails(selectedItemName))
-                context.requestRedraw()
-            }
+                requestRedraw()
+            },
         )
 
-        rightPager = context.pager(
-            getState = { detailState }
+        rightPager = pager(
+            getState = { detailState },
         )
 
-        split = context.split(
+        split = split(
             left = leftList,
             right = rightPager,
             leftTitle = "Items",
@@ -543,7 +550,7 @@ class SpinnersDemoScreen : Screen() {
         Shortcut("-", "- Speed-", description = "Decrease speed") {
             viewModel.onEvent(SpinnerDemoEvent.SlowDown)
         },
-        Shortcut("]", "]", showInStatusBar = false, description = "Increase speed") {
+        Shortcut("]", "]", showInStatusBar = false, description = "Incre§ase speed") {
             viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
         },
         Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
@@ -551,9 +558,10 @@ class SpinnersDemoScreen : Screen() {
         }
     )
 
-    override fun buildContent(context: ScreenContext): Component {
-        var tick by context.mutableStateOf(0)
-        var selectedCategory by context.mutableStateOf(SpinnerCategory.Classics)
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@SpinnersDemoScreen.navigator = navigator
+        var tick by mutableStateOf(0)
+        var selectedCategory by mutableStateOf(SpinnerCategory.Classics)
 
         GlobalScope.launch {
             viewModel.state.collect { state ->
@@ -564,7 +572,7 @@ class SpinnersDemoScreen : Screen() {
         val categories = SpinnerCategory.values().toList()
         val categoryEntries = categories.map { ListEntry.Item(it) }
 
-        val leftList = context.list(
+        val leftList = list(
             getEntries = { categoryEntries },
             renderItem = { category, focused ->
                 val row = if (focused) hbox(text(" ▶ ").bold(), text(category.displayName)).inverted()
@@ -579,7 +587,7 @@ class SpinnersDemoScreen : Screen() {
             }
         )
 
-        val rightList = context.list(
+        val rightList = list(
             getEntries = {
                 categorySpinners[selectedCategory]?.map { ListEntry.Item(it) } ?: emptyList()
             },
@@ -616,7 +624,7 @@ class SpinnersDemoScreen : Screen() {
             }
         )
 
-        split = context.split(
+        split = split(
             left = leftList,
             right = rightList,
             leftTitle = "Categories",

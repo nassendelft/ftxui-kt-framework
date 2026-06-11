@@ -7,14 +7,13 @@ import platform.posix.*
 // so creating the directory is implemented per-target with a width-safe signature.
 internal expect fun makeDirectory(path: String)
 
-@OptIn(ExperimentalForeignApi::class)
-object Preferences {
-    private var filePath: String = ""
+class Preferences internal constructor(appName: String) {
+    private val filePath: String
     private val data: MutableMap<String, String> = mutableMapOf()
 
-    fun init(appName: String) {
-        val home = getenv("HOME")?.toKString() ?: return
-        val dir = "$home/.config/$appName"
+    init {
+        val sanitizedAppName = appName.replace(" ", "-").replace(Regex("[^a-zA-Z0-9_-]"), "")
+        val dir = getPreferencesDirectory(sanitizedAppName)
         makeDirectory(dir) // 0755
         filePath = "$dir/prefs.properties"
         load()
@@ -62,5 +61,20 @@ object Preferences {
         val file = fopen(path, "w") ?: return
         fputs(content, file)
         fclose(file)
+    }
+
+    private fun getPreferencesDirectory(appName: String): String {
+        // 1. Check for explicit XDG environment variable (preferred on Linux)
+        val xdgConfig = getenv("XDG_CONFIG_HOME")?.toKString()
+        if (!xdgConfig.isNullOrBlank()) {
+            return "$xdgConfig/$appName"
+        }
+
+        // 2. Fall back to standard $HOME variable (works on both Linux and macOS)
+        val home = getenv("HOME")?.toKString()
+            ?: throw IllegalStateException("Environment variable HOME is not set.")
+
+        // Both OS platforms will now cleanly use ~/.config/your_app/
+        return "$home/.config/$appName"
     }
 }

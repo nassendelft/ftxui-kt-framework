@@ -13,6 +13,7 @@ data class Tab(
 )
 
 fun runTabApp(
+    name: String,
     tabs: List<Tab>,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
@@ -21,7 +22,7 @@ fun runTabApp(
     require(tabs.isNotEmpty()) { "TabApp requires at least one tab" }
     val app = FtxUIApp.fullscreen()
     if (enableCtrlZ) app.forceHandleCtrlZ(false)
-    val runner = TabAppRunner(app, tabs, confirmOnQuit, tabBarStyle)
+    val runner = TabAppRunner(name, app, tabs, confirmOnQuit, tabBarStyle)
     runner.start()
 }
 
@@ -35,6 +36,8 @@ internal class TabContext(
     val label: String,
     initialScreen: () -> Screen,
     private val requestFrame: () -> Unit,
+    private val postTask: (() -> Unit) -> Unit,
+    private val preferences: Preferences,
 ) : Navigator {
 
     private class ScreenEntry(val screen: Screen, val component: Component, val tabIndex: Int)
@@ -62,13 +65,15 @@ internal class TabContext(
     }
 
     override fun push(screen: Screen) {
-        val context = object : ScreenContext {
-            override val navigator: Navigator get() = this@TabContext
+        val context = object : AppContext {
+            override val preferences: Preferences get() = this@TabContext.preferences
             override fun requestRedraw() {
                 requestFrame()
             }
+            override fun post(action: () -> Unit) = postTask(action)
+            override val terminalSize: Dimension get() = Dimension(Terminal.size().dimx, Terminal.size().dimy)
         }
-        val component = screen.build(context)
+        val component = screen.build(context, this)
         screensContainer.add(component)
         val index = totalComponentsAdded++
         stack.addLast(ScreenEntry(screen, component, index))
@@ -157,11 +162,12 @@ internal class TabContext(
 // ---------------------------------------------------------------------------
 
 internal class TabAppRunner(
+    name: String,
     app: FtxUIApp,
     tabs: List<Tab>,
     confirmOnQuit: Boolean,
     private val style: TabBarStyle = TabBarStyle(),
-) : BaseAppRunner(app, confirmOnQuit) {
+) : BaseAppRunner(name, app, confirmOnQuit) {
 
     private val contexts: List<TabContext>
 
@@ -172,7 +178,7 @@ internal class TabAppRunner(
 
     init {
         contexts = tabs.map { tab ->
-            TabContext(tab.label, tab.initialScreen) { app.requestAnimationFrame() }
+            TabContext(tab.label, tab.initialScreen, { app.requestAnimationFrame() }, app::post, preferences)
         }
         contexts.forEach { ctx ->
             ctx.onExit = {
@@ -205,10 +211,10 @@ internal class TabAppRunner(
     }
 
     fun start() {
-        if (confirmOnQuit) app.forceHandleCtrlC(false)
+        app.forceHandleCtrlC(!confirmOnQuit)
         val root = createRootComponent()
         app.loop(root)
-        Preferences.save()
+        preferences.save()
         scope.cancel()
         contexts.forEach { it.cancel() }
     }

@@ -3,15 +3,14 @@ package nl.ncaj.ftxui.framework
 import nl.ncaj.ftxui.Component
 import nl.ncaj.ftxui.Terminal
 
-fun responsiveHorizontal(
+fun AppContext.responsiveHorizontal(
     breakpoint: Int = 120,
     narrow: () -> Component,
     wide: () -> Component,
-): Component = if (Terminal.size().dimx >= breakpoint) wide() else narrow()
+): Component = if (terminalSize.width >= breakpoint) wide() else narrow()
 
-fun responsiveVertical(
+fun AppContext.responsiveVertical(
     breakpoint: Int = 30,
     short: () -> Component,
     tall: () -> Component,
-): Component = if (Terminal.size().dimy >= breakpoint) tall() else short()
-
+): Component = if (terminalSize.height >= breakpoint) tall() else short()

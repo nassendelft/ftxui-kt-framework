@@ -9,8 +9,7 @@ import nl.ncaj.ftxui.*
 import kotlin.time.Duration.Companion.milliseconds
 
 fun demoMain() {
-    Preferences.init("ftxui-kt-demo")
-    runApp(HomeScreen(), confirmOnQuit = true, enableCtrlZ = true)
+    runApp("ftxui-kt-demo", HomeScreen(), confirmOnQuit = true, enableCtrlZ = true)
 }
 
 // =============================================================================
@@ -32,6 +31,9 @@ class HomeScreen : Screen() {
     }
 
     private lateinit var navigator: Navigator
+    private lateinit var listComponent: Component
+
+    override val activeWindow get() = listComponent
 
     override val globalShortcuts get() = listOf(
         Shortcut(Key.CtrlQ, "^Q  Quit", description = "Quit the application", showInStatusBar = false) {
@@ -39,16 +41,16 @@ class HomeScreen : Screen() {
         },
     )
 
-    override fun buildContent(context: ScreenContext): Component {
-        this.navigator = context.navigator
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@HomeScreen.navigator = navigator
         val entries = buildList {
             add(ListEntry.Header(MenuItem("Windows")))
-            add(ListEntry.Item(MenuItem("Fruit List",       "Scrollable list with fuzzy search")) { context.navigator.push(FruitListScreen()) })
-            add(ListEntry.Item(MenuItem("Table View",       "Sortable 2D table  (s = sort  j/k = nav)")) { context.navigator.push(TableDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Pager",            "Read-only text with search & line numbers")) { context.navigator.push(PagerDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Split View",       "Two-panel layout with Tab focus")) { context.navigator.push(SplitDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Tree View",        "Hierarchical tree with expand/collapse")) { context.navigator.push(TreeDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Async Loading",    "ViewModel with coroutine-based loading")) { context.navigator.push(AsyncDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Fruit List",       "Scrollable list with fuzzy search")) { navigator.push(FruitListScreen()) })
+            add(ListEntry.Item(MenuItem("Table View",       "Sortable 2D table  (s = sort  j/k = nav)")) { navigator.push(TableDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Pager",            "Read-only text with search & line numbers")) { navigator.push(PagerDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Split View",       "Two-panel layout with Tab focus")) { navigator.push(SplitDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Tree View",        "Hierarchical tree with expand/collapse")) { navigator.push(TreeDemoScreen()) })
+            add(ListEntry.Item(MenuItem("Async Loading",    "ViewModel with coroutine-based loading")) { navigator.push(AsyncDemoScreen()) })
 
             add(ListEntry.Header(MenuItem("Dialogs")))
             add(ListEntry.Item(MenuItem("Alert",            "Informational dismissible overlay")) {
@@ -89,12 +91,12 @@ class HomeScreen : Screen() {
 
             add(ListEntry.Header(MenuItem("Preferences")))
             add(ListEntry.Item(MenuItem("Increment counter", "Survives restarts")) {
-                val count = Preferences.getInt("demo.counter") + 1
-                Preferences.setInt("demo.counter", count)
+                val count = preferences.getInt("demo.counter") + 1
+                preferences.setInt("demo.counter", count)
                 navigator.notify("Counter = $count (saved)", Toast.SHORT, Toast.Type.Success)
             })
             add(ListEntry.Item(MenuItem("Reset counter", "")) {
-                Preferences.setInt("demo.counter", 0)
+                preferences.setInt("demo.counter", 0)
                 navigator.notify("Counter reset to 0", Toast.SHORT)
             })
 
@@ -117,7 +119,7 @@ class HomeScreen : Screen() {
             add(ListEntry.Item(MenuItem("Quit", "")) { navigator.pop() })
         }
 
-        return context.list(
+        listComponent = list(
             getEntries = { entries },
             renderItem = { item, focused ->
                 val label = text("  ${item.label.padEnd(20)} ")
@@ -129,6 +131,7 @@ class HomeScreen : Screen() {
             },
             toSearchString = { it.label }
         )
+        return listComponent
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -191,15 +194,18 @@ class FruitListScreen : Screen() {
     )
 
     private lateinit var navigator: Navigator
+    private lateinit var listComponent: Component
 
-    override fun buildContent(context: ScreenContext): Component {
-        this.navigator = context.navigator
+    override val activeWindow get() = listComponent
+
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@FruitListScreen.navigator = navigator
         GlobalScope.launch {
             viewModel.state.collect { state ->
-                context.requestRedraw()
+                requestRedraw()
             }
         }
-        return context.list(
+        listComponent = list(
             getEntries = { buildListState(viewModel.state.value) },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
@@ -210,6 +216,7 @@ class FruitListScreen : Screen() {
             },
             toSearchString = { it.name }
         )
+        return listComponent
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
@@ -253,9 +260,9 @@ class DetailScreen(fruit: Fruit) : Screen() {
         Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator?.pop() },
     )
 
-    override fun buildContent(context: ScreenContext): Component {
-        this.navigator = context.navigator
-        listComponent = context.list(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@DetailScreen.navigator = navigator
+        listComponent = list(
             getEntries = { entries },
             renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
             renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
@@ -279,9 +286,16 @@ class PagerDemoScreen : Screen() {
         override fun onEvent(event: Nothing) {}
     }
 
-    override fun buildContent(context: ScreenContext): Component = context.pager(
-        getState = { viewModel.state.value }
-    )
+    private lateinit var pagerComponent: Component
+
+    override val activeWindow get() = pagerComponent
+
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        pagerComponent = pager(
+            getState = { viewModel.state.value }
+        )
+        return pagerComponent
+    }
 
     companion object {
         val DEMO_LINES = """
@@ -390,30 +404,35 @@ class SplitDemoScreen : Screen() {
         override fun onEvent(event: Nothing) {}
     }
 
-    override fun buildContent(context: ScreenContext): Component {
+    private lateinit var splitComponent: Component
+
+    override val activeWindow get() = splitComponent
+
+    override fun AppContext.buildContent(navigator: Navigator): Component {
         val state = viewModel.state.value
         val leftEntries = state.fruits.map { ListEntry.Item(it) }
         val rightEntries = state.vegetables.map { ListEntry.Item(it) }
 
-        val leftList = context.list(
+        val leftList = list(
             getEntries = { leftEntries },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
                 else hbox(text("   "), text(fruit.name))
             },
-            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
+            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
         )
 
-        val rightList = context.list(
+        val rightList = list(
             getEntries = { rightEntries },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
                 else hbox(text("   "), text(fruit.name))
             },
-            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) }
+            renderHeader = { fruit -> hbox(text(" ── ${fruit.name} ──").bold(), filler()) },
         )
 
-        return context.split(leftList, rightList, leftTitle = "Fruits", rightTitle = "Vegetables")
+        splitComponent = split(leftList, rightList, leftTitle = "Fruits", rightTitle = "Vegetables")
+        return splitComponent
     }
 }
 
@@ -449,7 +468,7 @@ class AsyncDemoViewModel : AsyncViewModel<FruitReport, AsyncDemoEvent>() {
 class AsyncDemoScreen : AsyncScreen<FruitReport, AsyncDemoEvent>() {
     override val viewModel = AsyncDemoViewModel()
 
-    override fun ScreenContext.buildLoaded(data: FruitReport): Component {
+    override fun AppContext.buildLoaded(navigator: Navigator, data: FruitReport): Component {
         val entries = buildList {
             add(ListEntry.Header("Loaded in ${data.loadTimeMs} ms"))
             data.fruits.forEach { add(ListEntry.Item(it.name)) }
@@ -524,20 +543,24 @@ class TreeDemoScreen : Screen() {
     )
 
     private lateinit var navigator: Navigator
+    private lateinit var treeComponent: Component
 
-    override fun buildContent(context: ScreenContext): Component {
-        this.navigator = context.navigator
+    override val activeWindow get() = treeComponent
+
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@TreeDemoScreen.navigator = navigator
         GlobalScope.launch {
             viewModel.state.collect {
-                context.requestRedraw()
+                requestRedraw()
             }
         }
-        return context.tree(
+        treeComponent = tree(
             getState = { TreeState(withCallbacks(viewModel.state.value.roots, emptyList())) },
             renderNode = { label, _, focused, _, _ ->
                 if (focused) text(label).inverted() else text(label)
             }
         )
+        return treeComponent
     }
 
     private fun withCallbacks(nodes: StringTree, prefix: List<Int>): StringTree =
@@ -570,41 +593,45 @@ class TableDemoScreen : Screen() {
     }
 
     private lateinit var navigator: Navigator
+    private lateinit var tableComponent: Component
+
+    override val activeWindow get() = tableComponent
 
     override val globalShortcuts get() = listOf(
         Shortcut(Key.CtrlB, "^B  Back", description = "Return to home") { navigator.pop() },
     )
 
-    override fun buildContent(context: ScreenContext): Component {
-        this.navigator = context.navigator
-        return context.table(
+    override fun AppContext.buildContent(navigator: Navigator): Component {
+        this@TableDemoScreen.navigator = navigator
+        tableComponent = table(
             getRows = { FRUIT_ROWS },
             columns = listOf(
                 TableColumn("Name", extract = { it.name }),
                 TableColumn(
-                    header = "Category",
-                    extract = { it.category },
-                    renderHeader = { text, width -> text(text.padEnd(width + 3)).bold().underlined() },
-                    renderCell = { item, width, focused ->
-                        val color = if (item.category == "Fruit") Color.Green else Color.Yellow
-                        val el = text(item.category.padEnd(width + 3)).color(color)
-                        if (focused) el.inverted() else el
-                    },
+                     header = "Category",
+                     extract = { it.category },
+                     renderHeader = { text, width -> text(text.padEnd(width + 3)).bold().underlined() },
+                     renderCell = { item, width, focused ->
+                         val color = if (item.category == "Fruit") Color.Green else Color.Yellow
+                         val el = text(item.category.padEnd(width + 3)).color(color)
+                         if (focused) el.inverted() else el
+                     },
                 ),
                 TableColumn(
-                    header = "Length",
-                    extract = { it.length.toString() },
-                    renderCell = { item, width, focused ->
-                        val bar = "█".repeat(item.length) + " ".repeat((width - item.length).coerceAtLeast(0) + 3)
-                        val el = text(bar).color(Color.Blue)
-                        if (focused) el.inverted() else el
-                    },
+                     header = "Length",
+                     extract = { it.length.toString() },
+                     renderCell = { item, width, focused ->
+                         val bar = "█".repeat(item.length) + " ".repeat((width - item.length).coerceAtLeast(0) + 3)
+                         val el = text(bar).color(Color.Blue)
+                         if (focused) el.inverted() else el
+                     },
                 ),
             ),
             onEnter = { row ->
                 Logger.info("Selected: ${row.name} (${row.category})")
             }
         )
+        return tableComponent
     }
 
     override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {

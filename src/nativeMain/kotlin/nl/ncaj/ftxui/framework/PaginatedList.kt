@@ -3,7 +3,7 @@ package nl.ncaj.ftxui.framework
 import kotlinx.coroutines.*
 import nl.ncaj.ftxui.*
 
-fun <T> ScreenContext.paginatedList(
+fun <T> AppContext.paginatedList(
     pageSize: Int = 50,
     loadThreshold: Int = 10,
     loadPage: suspend (offset: Int, limit: Int) -> List<ListEntry<T>>,
@@ -22,7 +22,7 @@ fun <T> ScreenContext.paginatedList(
     
     var focusedIndex by mutableStateOf(-1)
     var scrollOffset by mutableStateOf(0)
-    var lastListH by mutableStateOf(20)
+    val viewport = viewport()
 
     val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     var loadJob: Job? = null
@@ -58,7 +58,7 @@ fun <T> ScreenContext.paginatedList(
     }
 
     val ensureScrollCoversSelection: () -> Unit = {
-        val visH = lastListH
+        val visH = viewport.height
         if (focusedIndex >= 0 && items.isNotEmpty()) {
             if (focusedIndex < scrollOffset) scrollOffset = focusedIndex
             if (focusedIndex >= scrollOffset + visH) scrollOffset = focusedIndex - visH + 1
@@ -73,9 +73,8 @@ fun <T> ScreenContext.paginatedList(
         ensureValidFocus()
         ensureScrollCoversSelection()
 
-        val visH = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
-        val listH = visH
-        lastListH = listH
+        val total = totalCount ?: onTotalCount?.invoke()
+        val listH = viewport.height
 
         val start = scrollOffset.coerceIn(0, items.size)
         val end = (scrollOffset + listH).coerceIn(0, items.size)
@@ -109,13 +108,12 @@ fun <T> ScreenContext.paginatedList(
         } else emptyList()
 
         val showing = items.count { it is ListEntry.Item }
-        val total = totalCount ?: onTotalCount?.invoke()
         val statusRow = if (total != null) hbox(text("  "), text("Showing $showing of $total").dim(), filler()) else null
         val allRows = rows + loadingRow
-        val listEl = hbox(
+        val listEl = viewport.measure(hbox(
             vbox(*allRows.toTypedArray()).flex(),
             vScrollBar(scrollOffset, items.size + (if (isLoadingMore) 1 else 0), listH, style.scrollThumb.or(Theme.current.scrollThumb)),
-        )
+        ))
 
         val bottomEl = if (statusRow != null) vbox(listEl, separator(), statusRow) else listEl
 

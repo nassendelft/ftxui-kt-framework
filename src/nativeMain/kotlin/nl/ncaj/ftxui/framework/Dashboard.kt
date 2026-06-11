@@ -8,7 +8,7 @@ data class DashboardCell(
     val onInput: ((FtxUIEvent) -> Boolean)? = null,
 )
 
-fun ScreenContext.dashboard(
+fun AppContext.dashboard(
     cells: List<DashboardCell>,
     columns: Int = 2,
     style: DashboardStyle = DashboardStyle()
@@ -33,14 +33,13 @@ fun ScreenContext.dashboard(
         gridContainer.add(rowComp)
     }
 
+    val viewport = viewport()
+
     return gridContainer.decorateRender {
         if (cells.isEmpty()) return@decorateRender emptyElement()
 
-        val termW = Terminal.size().dimx
-        val termH = Terminal.size().dimy - Screen.STATUS_BAR_HEIGHT
-
-        val cellW = termW / cols
-        val cellH = termH / rows
+        val cellW = viewport.width / cols
+        val cellH = viewport.height / rows
 
         val grid = (0 until rows).map { r ->
             val rowCells = (0 until cols).map { c ->
@@ -67,6 +66,6 @@ fun ScreenContext.dashboard(
             hbox(*rowCells.toTypedArray())
         }
 
-        vbox(*grid.toTypedArray())
+        viewport.measure(vbox(*grid.toTypedArray()))
     }
 }
