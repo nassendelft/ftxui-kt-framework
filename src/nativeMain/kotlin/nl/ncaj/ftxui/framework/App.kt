@@ -15,13 +15,16 @@ import kotlin.time.TimeSource
 
 data class Dimension(val width: Int, val height: Int)
 
-interface AppContext {
-    val preferences: Preferences
-    fun requestRedraw()
+class AppContext(
+    val preferences: Preferences,
+    val navigator: Navigator,
+    private val app: FtxUIApp
+) {
+    fun requestRedraw() = app.requestAnimationFrame()
 
     /** Runs [action] on the UI loop after the current frame has been drawn. */
-    fun post(action: () -> Unit)
-    val terminalSize: Dimension
+    fun post(action: () -> Unit) = app.post(action)
+    val terminalSize: Dimension get() = Dimension(Terminal.size().dimx, Terminal.size().dimy)
 }
 
 class MutableState<T>(
@@ -46,14 +49,14 @@ fun <T> AppContext.mutableStateOf(initial: T): MutableState<T> =
 
 fun runApp(
     name: String,
-    initialComponentBuilder: AppContext.(Navigator) -> Component,
+    initialComponentBuilder: AppContext.() -> Component,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
 ) {
     val app = FtxUIApp.fullscreen()
     if (enableCtrlZ) app.forceHandleCtrlZ(false)
     val runner = App(name, app, confirmOnQuit = confirmOnQuit)
-    val comp = runner.initialComponentBuilder(runner)
+    val comp = runner.context.initialComponentBuilder()
     runner.start(comp)
 }
 
@@ -61,7 +64,8 @@ internal class App(
     private val name: String,
     private val app: FtxUIApp,
     private val confirmOnQuit: Boolean = false,
-) : AppContext, Navigator {
+) {
+    val context = AppContext(Preferences(name), Navigator(this), app)
 
     private class ComponentEntry(
         val component: Component,
@@ -71,13 +75,6 @@ internal class App(
     private class ToastData(val toast: Toast, @Volatile var progress: Float = 0f)
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
-    override val preferences = Preferences(name)
-
-    override fun requestRedraw() = app.requestAnimationFrame()
-    override fun post(action: () -> Unit) = app.post(action)
-
-    override val terminalSize: Dimension get() = Dimension(Terminal.size().dimx, Terminal.size().dimy)
 
     private val stack = ArrayDeque<ComponentEntry>()
     private val tabSelector = IntState(0)
@@ -89,18 +86,18 @@ internal class App(
     @Volatile private var activeToasts: List<ToastData> = emptyList()
     @Volatile private var notificationLog: List<NotificationRecord> = emptyList()
 
-    override val currentComponent: Component? get() = stack.lastOrNull()?.component
+    val currentComponent: Component? get() = stack.lastOrNull()?.component
 
-    private var showHelp by mutableStateOf(false)
-    private var showPalette by mutableStateOf(false)
-    private var showPerfOverlay by mutableStateOf(false)
-    private var confirmingQuit by mutableStateOf(false)
+    private var showHelp by app.mutableStateOf(false)
+    private var showPalette by app.mutableStateOf(false)
+    private var showPerfOverlay by app.mutableStateOf(false)
+    private var confirmingQuit by app.mutableStateOf(false)
 
-    internal var logPanelOpen by mutableStateOf(false)
-    internal var notificationPanelOpen by mutableStateOf(false)
+    internal var logPanelOpen by app.mutableStateOf(false)
+    internal var notificationPanelOpen by app.mutableStateOf(false)
 
     private val logPanel by lazy {
-        logPanel(
+        context.logPanel(
             isOpen = { logPanelOpen },
             onToggle = { open ->
                 logPanelOpen = open
@@ -109,7 +106,7 @@ internal class App(
         )
     }
     private val notificationPanel by lazy {
-        notificationPanel(
+        context.notificationPanel(
             isOpen = { notificationPanelOpen },
             onToggle = { open ->
                 notificationPanelOpen = open
@@ -119,7 +116,7 @@ internal class App(
         )
     }
     private val palettePanel by lazy {
-        commandPalette(
+        context.commandPalette(
             isOpen = { showPalette },
             onToggle = { open ->
                 showPalette = open
@@ -129,7 +126,7 @@ internal class App(
         )
     }
     private val perfPanel by lazy {
-        perfOverlay(
+        context.perfOverlay(
             isVisible = { showPerfOverlay },
             getExtraLines = { listOf("Stack: ${stack.size}") }
         )
@@ -139,14 +136,14 @@ internal class App(
         currentComponent?.takeFocus() ?: tabContainer.takeFocus()
     }
 
-    override fun registerShortcuts(shortcuts: List<Shortcut>) {
+    internal fun registerShortcuts(shortcuts: List<Shortcut>) {
         stack.lastOrNull()?.let { entry ->
             entry.shortcuts = shortcuts
             app.requestAnimationFrame()
         }
     }
 
-    override fun clearShortcuts() {
+    internal fun clearShortcuts() {
         stack.lastOrNull()?.let { entry ->
             entry.shortcuts = emptyList()
             app.requestAnimationFrame()
@@ -349,7 +346,7 @@ internal class App(
         return body.window(text(" Keyboard Shortcuts ").bold()).clearUnder().hcenter().vcenter()
     }
 
-    override fun push(component: Component) {
+    internal fun push(component: Component) {
         tabContainer.add(component)
         val index = totalComponentsAdded++
         stack.addLast(ComponentEntry(component, index))
@@ -357,7 +354,7 @@ internal class App(
         app.requestAnimationFrame()
     }
 
-    override fun pop() {
+    internal fun pop() {
         if (stack.isEmpty()) return
         stack.removeLast()
         if (stack.isEmpty()) {
@@ -368,19 +365,19 @@ internal class App(
         }
     }
 
-    override fun showDialog(dialog: Dialog) {
+    internal fun showDialog(dialog: Dialog) {
         activeDialog = dialog
         promptInput = ""
         app.requestAnimationFrame()
     }
 
-    override fun dismissDialog() {
+    internal fun dismissDialog() {
         activeDialog = null
         promptInput = ""
         app.requestAnimationFrame()
     }
 
-    override fun notify(message: String, duration: Duration, type: Toast.Type) {
+    internal fun notify(message: String, duration: Duration, type: Toast.Type) {
         notificationLog = (listOf(NotificationRecord(message, type, currentTimestamp())) + notificationLog).take(100)
         val entry = ToastData(Toast(message, type))
         activeToasts = (activeToasts + entry).takeLast(3)
@@ -401,12 +398,12 @@ internal class App(
         }
     }
 
-    fun start(initialComponent: Component) {
+    internal fun start(initialComponent: Component) {
         app.forceHandleCtrlC(!confirmOnQuit)
         push(initialComponent)
         val root = createRootComponent()
         app.loop(root)
-        preferences.save()
+        context.preferences.save()
         scope.cancel()
     }
 }
