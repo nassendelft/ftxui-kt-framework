@@ -108,13 +108,6 @@ class HomeScreen : Screen() {
             add(ListEntry.Item(MenuItem("Step Progress",    "Multi-step pipeline with spinner")) { navigator.push(StepProgressDemoScreen()) })
             add(ListEntry.Item(MenuItem("Spinners Demo",    "Catalog of all 65 animated spinners")) { navigator.push(SpinnersDemoScreen()) })
             add(ListEntry.Item(MenuItem("Responsive Layout","Narrow vs. wide terminal layout")) { navigator.push(ResponsiveDemoScreen()) })
-            add(ListEntry.Item(MenuItem("Tab App Demo",     "Re-launch demo using TabApp")) {
-                navigator.showDialog(Dialog.Alert(
-                    title = "Tab App",
-                    message = "Call runTabApp(tabs) in main() to use the tabbed entry point.",
-                ))
-            })
-
             add(ListEntry.Header(MenuItem("App  (^Alt+P = perf  Ctrl+C = confirm quit)")))
             add(ListEntry.Item(MenuItem("Quit", "")) { navigator.pop() })
         }

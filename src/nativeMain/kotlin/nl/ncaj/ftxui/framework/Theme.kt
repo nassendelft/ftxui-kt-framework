@@ -128,15 +128,6 @@ data class StepProgressStyle(
     val skippedColor: Color? = null,
 )
 
-/**
- * Controls the tab bar rendering in [TabApp].
- */
-data class TabBarStyle(
-    val activeTabForeground: Color? = null,
-    val inactiveTabForeground: Color? = null,
-    val borderStyle: BorderStyle? = null,
-    val borderColor: Color? = null,
-)
 
 /**
  * Controls the file picker rendering.

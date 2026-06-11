@@ -109,28 +109,6 @@ fun main() {
 }
 ```
 
-### Tabbed app
-
-```kotlin
-fun main() {
-    Preferences.init("my-app")
-    runTabApp(
-        tabs = listOf(
-            Tab("Files")   { FilesScreen() },
-            Tab("Search")  { SearchScreen() },
-            Tab("Settings"){ SettingsScreen() },
-        ),
-        confirmOnQuit = true,
-        tabBarStyle = TabBarStyle(
-            activeTabForeground = Color.Cyan,
-            borderStyle = BorderStyle.Light
-        )
-    )
-}
-```
-
-Tab navigation uses `Alt+H` / `Alt+L` to switch tabs. Each tab maintains its own independent navigation stack and modal overlays.
-
 ---
 
 ## Built-in Views
@@ -342,7 +320,6 @@ val listView = context.list(
 * `DashboardStyle`: `focusedTitleForeground`, `unfocusedTitleForeground`, `borderStyle`, `focusedBorderStyle`
 * `PagerStyle`: `searchHighlight`, `lineNumberColor`, `scrollThumb`
 * `StepProgressStyle`: `pendingColor`, `runningColor`, `doneColor`, `failedColor`, `skippedColor`
-* `TabBarStyle`: `activeTabForeground`, `inactiveTabForeground`, `borderStyle`, `borderColor`
 * `FilePickerStyle`: `directoryColor`, `fileColor`, `pathColor`, `scrollThumb`
 * `TextEditorStyle`: `lineNumbersColor`, `cursorForeground`, `cursorBackground`, `scrollThumb`
 
@@ -512,4 +489,3 @@ val component = responsive(
 - `Ctrl+N` and `Ctrl+L` are reserved by the framework; do not register them on screens.
 - `enableCtrlZ = true` is required in `runApp()` to use undo/redo in `textEditor`.
 - Component focus is managed via native FTXUI focus APIs. Specify the active component that should receive input via the `activeWindow` property on the screen.
-- `TabApp` uses `Alt+H`/`L` for tab navigation — `Ctrl+Tab` is avoided because it is intercepted by most terminal emulators.
