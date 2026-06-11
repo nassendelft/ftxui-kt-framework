@@ -122,7 +122,7 @@ internal class App(
                 showPalette = open
                 if (!open) restoreFocus()
             },
-            getShortcuts = { stack.lastOrNull()?.shortcuts ?: emptyList() }
+            getShortcuts = { getActiveShortcuts() }
         )
     }
     private val perfPanel by lazy {
@@ -130,6 +130,12 @@ internal class App(
             isVisible = { showPerfOverlay },
             getExtraLines = { listOf("Stack: ${stack.size}") }
         )
+    }
+
+    private fun getActiveShortcuts(): List<Shortcut> {
+        val entry = stack.lastOrNull() ?: return emptyList()
+        val componentShortcuts = context.navigator.getShortcutsForComponent(entry.component)
+        return entry.shortcuts.ifEmpty { componentShortcuts }
     }
 
     private fun restoreFocus() {
@@ -151,8 +157,7 @@ internal class App(
     }
 
     private fun buildStatusBar(): Element {
-        val entry = stack.lastOrNull()
-        val shortcuts = entry?.shortcuts ?: emptyList()
+        val shortcuts = getActiveShortcuts()
         val visible = shortcuts.filter { it.showInStatusBar }
         val elems = buildList {
             add(text(" "))
@@ -299,8 +304,8 @@ internal class App(
     }
 
     private fun handleComponentInput(event: FtxUIEvent): Boolean {
-        val entry = stack.lastOrNull() ?: return false
-        val shortcut = entry.shortcuts.find { event.isKey(it.key) }
+        val shortcuts = getActiveShortcuts()
+        val shortcut = shortcuts.find { event.isKey(it.key) }
         if (shortcut != null) {
             shortcut.action()
             return true
@@ -329,9 +334,9 @@ internal class App(
     }
 
     private fun buildHelpElement(): Element {
-        val entry = stack.lastOrNull()
+        val shortcuts = getActiveShortcuts()
         val rows = buildList {
-            entry?.shortcuts?.forEach { sc ->
+            shortcuts.forEach { sc ->
                 add(hbox(text("  ${sc.label.padEnd(12)} "), text(sc.description).dim(), text("  ")))
             }
             if (stack.size > 1) {
@@ -356,7 +361,8 @@ internal class App(
 
     internal fun pop() {
         if (stack.isEmpty()) return
-        stack.removeLast()
+        val entry = stack.removeLast()
+        context.navigator.removeShortcutsForComponent(entry.component)
         if (stack.isEmpty()) {
             app.exit()
         } else {

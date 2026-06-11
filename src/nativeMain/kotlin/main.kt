@@ -12,7 +12,7 @@ import nl.ncaj.ftxui.*
 import kotlin.time.Duration.Companion.milliseconds
 
 fun demoMain() {
-    runApp("ftxui-kt-demo", { navigator -> HomeScreen(navigator, this).build() }, confirmOnQuit = true, enableCtrlZ = true)
+    runApp("ftxui-kt-demo", { HomeScreen(navigator, this).build() }, confirmOnQuit = true, enableCtrlZ = true)
 }
 
 // =============================================================================
@@ -29,12 +29,6 @@ data class MenuItem(val label: String, val description: String = "")
 
 class HomeScreen(private val navigator: Navigator, private val context: AppContext) {
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.CtrlQ, "^Q  Quit", description = "Quit the application", showInStatusBar = false) {
-                navigator.pop()
-            },
-        ))
-
         val entries = buildList {
             add(ListEntry.Header(MenuItem("Windows")))
             add(ListEntry.Item(MenuItem("Fruit List",       "Scrollable list with fuzzy search")) { navigator.push(FruitListScreen(navigator, this@run).build()) })
@@ -115,7 +109,11 @@ class HomeScreen(private val navigator: Navigator, private val context: AppConte
                 hbox(text("  ─── ${item.label} ───").bold(), filler())
             },
             toSearchString = { it.label }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.CtrlQ, "^Q  Quit", description = "Quit the application", showInStatusBar = false) {
+                navigator.pop()
+            },
+        ))
     }
 }
 
@@ -167,12 +165,6 @@ class FruitListScreen(private val navigator: Navigator, private val context: App
     val viewModel = FruitListViewModel()
 
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.CtrlN, "^N  Add", description = "Add a random item to the list") {
-                viewModel.onEvent(FruitListEvent.AddRandom)
-            },
-        ))
-
         GlobalScope.launch {
             viewModel.state.collect { state ->
                 requestRedraw()
@@ -189,7 +181,11 @@ class FruitListScreen(private val navigator: Navigator, private val context: App
                 hbox(text(" ── ${fruit.name} ──").bold(), filler())
             },
             toSearchString = { it.name }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.CtrlN, "^N  Add", description = "Add a random item to the list") {
+                viewModel.onEvent(FruitListEvent.AddRandom)
+            },
+        ))
     }
 
     private fun buildListState(state: FruitListState): List<ListEntry<Fruit>> {
@@ -220,14 +216,13 @@ class DetailScreen(private val navigator: Navigator, private val context: AppCon
     }
 
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator.pop() },
-        ))
         list(
             getEntries = { entries },
             renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
             renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator.pop() },
+        ))
     }
 }
 
@@ -424,20 +419,6 @@ class AsyncDemoScreen(private val navigator: Navigator, private val context: App
     }
 
     fun build(): Component = context.run {
-        val updateShortcuts = {
-            if (state is AsyncState.Error) {
-                navigator.registerShortcuts(listOf(
-                    Shortcut("r", "r Retry", description = "Retry loading") {
-                        load()
-                    }
-                ))
-            } else {
-                navigator.clearShortcuts()
-            }
-        }
-
-        updateShortcuts()
-
         val tabIndex = IntState(0)
         val tabContainer = tab(tabIndex)
 
@@ -461,20 +442,17 @@ class AsyncDemoScreen(private val navigator: Navigator, private val context: App
         var successCount = 0
         var loadedComp: Component? = null
 
-        renderer {
+        val mainComp = renderer {
             val s = state
             when (s) {
                 is AsyncState.Loading -> {
-                    updateShortcuts()
                     tabIndex.value = 0
                 }
                 is AsyncState.Error -> {
-                    updateShortcuts()
                     tabIndex.value = 1
                 }
                 is AsyncState.Success -> {
                     if (loadedComp == null) {
-                        updateShortcuts()
                         val data = s.data
                         val entries = buildList {
                             add(ListEntry.Header("Loaded in ${data.loadTimeMs} ms"))
@@ -498,6 +476,18 @@ class AsyncDemoScreen(private val navigator: Navigator, private val context: App
                 true
             } else {
                 false
+            }
+        }
+
+        mainComp.registerShortcuts(navigator) {
+            if (state is AsyncState.Error) {
+                listOf(
+                    Shortcut("r", "r Retry", description = "Retry loading") {
+                        load()
+                    }
+                )
+            } else {
+                emptyList()
             }
         }
     }
@@ -559,12 +549,6 @@ class TreeDemoScreen(private val navigator: Navigator, private val context: AppC
     val viewModel = TreeDemoViewModel()
 
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.CtrlR, "^R  Collapse all", description = "Collapse all top-level nodes") {
-                viewModel.onEvent(TreeDemoEvent.CollapseAll)
-            },
-        ))
-
         GlobalScope.launch {
             viewModel.state.collect {
                 requestRedraw()
@@ -575,7 +559,11 @@ class TreeDemoScreen(private val navigator: Navigator, private val context: AppC
             renderNode = { label, _, focused, _, _ ->
                 if (focused) text(label).inverted() else text(label)
             }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.CtrlR, "^R  Collapse all", description = "Collapse all top-level nodes") {
+                viewModel.onEvent(TreeDemoEvent.CollapseAll)
+            },
+        ))
     }
 
     private fun withCallbacks(nodes: StringTree, prefix: List<Int>): StringTree =
@@ -598,9 +586,6 @@ data class FruitRow(val name: String, val category: String, val length: Int)
 
 class TableDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.CtrlB, "^B  Back", description = "Return to home") { navigator.pop() },
-        ))
         table(
             getRows = { FRUIT_ROWS },
             columns = listOf(
@@ -628,7 +613,9 @@ class TableDemoScreen(private val navigator: Navigator, private val context: App
             onEnter = { row ->
                 Logger.info("Selected: ${row.name} (${row.category})")
             }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.CtrlB, "^B  Back", description = "Return to home") { navigator.pop() },
+        ))
     }
 
     companion object {

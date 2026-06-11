@@ -15,32 +15,26 @@ class TextEditorDemoScreen(private val navigator: Navigator, private val context
     private var editorState = TextEditorState(INITIAL_TEXT)
 
     fun build(): Component = context.run {
-        val updateShortcuts = {
-            val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
-            navigator.registerShortcuts(listOf(
-                Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
-                    val lines = editorText.lines().size
-                    navigator.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
-                },
-                Shortcut("", cursorInfo, showInStatusBar = true, action = {})
-            ))
-        }
-
-        updateShortcuts()
-
         textEditor(
             content = ::editorText,
             showLineNumbers = true,
             onContentChange = { text ->
                 Logger.debug("Editor: ${text.lines().size} lines")
-                updateShortcuts()
             },
             onStateChange = { newState ->
                 editorState = newState
                 requestRedraw()
-                updateShortcuts()
             }
-        )
+        ).registerShortcuts(navigator) {
+            val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
+            listOf(
+                Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
+                    val lines = editorText.lines().size
+                    navigator.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
+                },
+                Shortcut("", cursorInfo, showInStatusBar = true, action = {})
+            )
+        }
     }
 
     companion object {
@@ -243,15 +237,6 @@ class StepProgressDemoScreen(private val navigator: Navigator, private val conte
     val viewModel = StepDemoViewModel()
 
     fun build(): Component = context.run {
-        navigator.registerShortcuts(listOf(
-            Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
-                viewModel.onEvent(StepDemoEvent.Start)
-            },
-            Shortcut(Key.CtrlR, "^R Reset", description = "Reset all steps") {
-                viewModel.onEvent(StepDemoEvent.Reset)
-            },
-        ))
-
         GlobalScope.launch {
             viewModel.state.collect {
                 requestRedraw()
@@ -259,7 +244,14 @@ class StepProgressDemoScreen(private val navigator: Navigator, private val conte
         }
         stepProgress(
             getState = { viewModel.state.value }
-        )
+        ).registerShortcuts(navigator, listOf(
+            Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
+                viewModel.onEvent(StepDemoEvent.Start)
+            },
+            Shortcut(Key.CtrlR, "^R Reset", description = "Reset all steps") {
+                viewModel.onEvent(StepDemoEvent.Reset)
+            },
+        ))
     }
 }
 
@@ -272,17 +264,7 @@ class ResponsiveDemoScreen(private val navigator: Navigator, private val context
     private var selectedItemName = "Item 1"
     private var detailState = PagerState(getDetails("Item 1"))
 
-    private fun updateShortcuts() {
-        val w = Terminal.size().dimx
-        val mode = if (w >= 100) "wide (split)" else "narrow (single)"
-        navigator.registerShortcuts(listOf(
-            Shortcut("", "width: $w  mode: $mode", showInStatusBar = true, action = {})
-        ))
-    }
-
     fun build(): Component = context.run {
-        updateShortcuts()
-
         val leftList = list(
             getEntries = { items },
             renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
@@ -307,11 +289,16 @@ class ResponsiveDemoScreen(private val navigator: Navigator, private val context
         )
 
         renderer {
-            updateShortcuts()
             responsiveHorizontal(breakpoint = 100,
                 narrow = { leftList },
                 wide   = { split },
             ).render()
+        }.registerShortcuts(navigator) {
+            val w = Terminal.size().dimx
+            val mode = if (w >= 100) "wide (split)" else "narrow (single)"
+            listOf(
+                Shortcut("", "width: $w  mode: $mode", showInStatusBar = true, action = {})
+            )
         }
     }
 
@@ -486,32 +473,9 @@ class SpinnersDemoScreen(private val navigator: Navigator, private val context: 
         var tick by mutableStateOf(0)
         var selectedCategory by mutableStateOf(SpinnerCategory.Classics)
 
-        val updateShortcuts = {
-            val delayMs = viewModel.state.value.delayMs
-            navigator.registerShortcuts(listOf(
-                Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
-                    viewModel.onEvent(SpinnerDemoEvent.ResetSpeed)
-                },
-                Shortcut("+", "+ Speed+", description = "Increase speed") {
-                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
-                },
-                Shortcut("-", "- Speed-", description = "Decrease speed") {
-                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
-                },
-                Shortcut("]", "]", showInStatusBar = false, description = "Increase speed") {
-                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
-                },
-                Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
-                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
-                },
-                Shortcut("", "Speed: ${delayMs}ms  (Use +/- or [/] to adjust)  ", showInStatusBar = true, action = {})
-            ))
-        }
-
         GlobalScope.launch {
             viewModel.state.collect { state ->
                 tick = state.tick
-                updateShortcuts()
             }
         }
 
@@ -587,6 +551,26 @@ class SpinnersDemoScreen(private val navigator: Navigator, private val context: 
             } else {
                 false
             }
+        }.registerShortcuts(navigator) {
+            val delayMs = viewModel.state.value.delayMs
+            listOf(
+                Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
+                    viewModel.onEvent(SpinnerDemoEvent.ResetSpeed)
+                },
+                Shortcut("+", "+ Speed+", description = "Increase speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+                },
+                Shortcut("-", "- Speed-", description = "Decrease speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+                },
+                Shortcut("]", "]", showInStatusBar = false, description = "Increase speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+                },
+                Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+                },
+                Shortcut("", "Speed: ${delayMs}ms  (Use +/- or [/] to adjust)  ", showInStatusBar = true, action = {})
+            )
         }
     }
 }
