@@ -40,8 +40,7 @@ kotlin {
         }
         nativeMain {
             dependencies {
-                implementation("nl.ncaj.ftxui:ftxui-kt-dsl:1.2.0")
-                implementation("nl.ncaj.ftxui:ftxui-kt:1.2.4")
+                implementation("nl.ncaj.ftxui:ftxui-kt:1.3.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }

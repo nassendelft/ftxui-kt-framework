@@ -10,46 +10,37 @@ import kotlin.time.Duration.Companion.milliseconds
 // Screen — Text Editor demo
 // =============================================================================
 
-class TextEditorDemoScreen : Screen() {
+class TextEditorDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     private var editorText = INITIAL_TEXT
     private var editorState = TextEditorState(INITIAL_TEXT)
-    private var navigator: Navigator? = null
-    private lateinit var editorComponent: Component
 
-    override val activeWindow get() = editorComponent
+    fun build(): Component = context.run {
+        val updateShortcuts = {
+            val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
+            navigator.registerShortcuts(listOf(
+                Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
+                    val lines = editorText.lines().size
+                    navigator.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
+                },
+                Shortcut("", cursorInfo, showInStatusBar = true, action = {})
+            ))
+        }
 
-    override val globalShortcuts get() = listOf(
-        Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
-            val lines = editorText.lines().size
-            navigator?.notify("$lines line(s) — Ctrl+Z undo  Ctrl+Y redo", Toast.SHORT, Toast.Type.Success)
-        },
-    )
+        updateShortcuts()
 
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@TextEditorDemoScreen.navigator = navigator
-        editorComponent = textEditor(
+        textEditor(
             content = ::editorText,
             showLineNumbers = true,
             onContentChange = { text ->
                 Logger.debug("Editor: ${text.lines().size} lines")
+                updateShortcuts()
             },
             onStateChange = { newState ->
                 editorState = newState
                 requestRedraw()
+                updateShortcuts()
             }
         )
-        return editorComponent
-    }
-
-    override fun buildStatusBar(): Element {
-        val baseStatusBar = super.buildStatusBar()
-        val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
-        return hbox(baseStatusBar, filler(), text(cursorInfo).dim())
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        return super.handleInput(event, navigator)
     }
 
     companion object {
@@ -74,27 +65,15 @@ class TextEditorDemoScreen : Screen() {
 // Screen — File Picker demo
 // =============================================================================
 
-class FilePickerDemoScreen : Screen() {
-    private lateinit var pickerComponent: Component
-    private var navigator: Navigator? = null
-
-    override val activeWindow get() = pickerComponent
-
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@FilePickerDemoScreen.navigator = navigator
-        pickerComponent = filePicker(
+class FilePickerDemoScreen(private val navigator: Navigator, private val context: AppContext) {
+    fun build(): Component = context.run {
+        filePicker(
             initialPath = ".",
             onFileSelected = { path ->
                 navigator.notify("Selected: $path", Toast.LONG, Toast.Type.Success)
                 navigator.pop()
             }
         )
-        return pickerComponent
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        return super.handleInput(event, navigator)
     }
 }
 
@@ -102,12 +81,8 @@ class FilePickerDemoScreen : Screen() {
 // Screen — Dashboard demo
 // =============================================================================
 
-class DashboardDemoScreen : Screen() {
-    private lateinit var dashboardComponent: Component
-
-    override val activeWindow get() = dashboardComponent
-
-    override fun AppContext.buildContent(navigator: Navigator): Component {
+class DashboardDemoScreen(private val navigator: Navigator, private val context: AppContext) {
+    fun build(): Component = context.run {
         val fruits = listOf("Apple", "Banana", "Cherry", "Dragon Fruit", "Elderberry", "Fig")
             .map { ListEntry.Item(it) }
         val fruitList = list(
@@ -149,7 +124,7 @@ class DashboardDemoScreen : Screen() {
             )
         }
 
-        dashboardComponent = dashboard(
+        dashboard(
             columns = 2,
             cells = listOf(
                 DashboardCell(
@@ -170,7 +145,6 @@ class DashboardDemoScreen : Screen() {
                 )
             )
         )
-        return dashboardComponent
     }
 }
 
@@ -178,15 +152,9 @@ class DashboardDemoScreen : Screen() {
 // Screen — Paginated list demo
 // =============================================================================
 
-class PaginatedListDemoScreen : Screen() {
-    private lateinit var pagedList: Component
-    private var navigator: Navigator? = null
-
-    override val activeWindow get() = pagedList
-
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@PaginatedListDemoScreen.navigator = navigator
-        pagedList = paginatedList(
+class PaginatedListDemoScreen(private val navigator: Navigator, private val context: AppContext) {
+    fun build(): Component = context.run {
+        paginatedList(
             pageSize = 25,
             loadThreshold = 5,
             loadPage = { offset, limit ->
@@ -203,12 +171,6 @@ class PaginatedListDemoScreen : Screen() {
             onSelect = { item -> navigator.notify("Selected: ${item.data}", Toast.SHORT) },
             onTotalCount = { 200 },
         )
-        return pagedList
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        return super.handleInput(event, navigator)
     }
 }
 
@@ -221,13 +183,13 @@ sealed class StepDemoEvent {
     data object Reset : StepDemoEvent()
 }
 
-class StepDemoViewModel : ViewModel<StepProgressState, StepDemoEvent>() {
+class StepDemoViewModel {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val _state = MutableStateFlow(StepProgressState(INITIAL_STEPS))
-    override val state: StateFlow<StepProgressState> = _state
+    val state: StateFlow<StepProgressState> = _state
     @Volatile private var running = false
 
-    override fun onEvent(event: StepDemoEvent) {
+    fun onEvent(event: StepDemoEvent) {
         when (event) {
             StepDemoEvent.Start -> if (!running) runPipeline()
             StepDemoEvent.Reset -> { running = false; _state.value = StepProgressState(INITIAL_STEPS) }
@@ -277,39 +239,27 @@ class StepDemoViewModel : ViewModel<StepProgressState, StepDemoEvent>() {
     }
 }
 
-class StepProgressDemoScreen : Screen() {
+class StepProgressDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     val viewModel = StepDemoViewModel()
 
-    private var navigator: Navigator? = null
-    private lateinit var progressComponent: Component
+    fun build(): Component = context.run {
+        navigator.registerShortcuts(listOf(
+            Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
+                viewModel.onEvent(StepDemoEvent.Start)
+            },
+            Shortcut(Key.CtrlR, "^R Reset", description = "Reset all steps") {
+                viewModel.onEvent(StepDemoEvent.Reset)
+            },
+        ))
 
-    override val globalShortcuts get() = listOf(
-        Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
-            viewModel.onEvent(StepDemoEvent.Start)
-        },
-        Shortcut(Key.CtrlR, "^R Reset", description = "Reset all steps") {
-            viewModel.onEvent(StepDemoEvent.Reset)
-        },
-    )
-
-    override val activeWindow get() = progressComponent
-
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@StepProgressDemoScreen.navigator = navigator
         GlobalScope.launch {
             viewModel.state.collect {
                 requestRedraw()
             }
         }
-        progressComponent = stepProgress(
+        stepProgress(
             getState = { viewModel.state.value }
         )
-        return progressComponent
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        return super.handleInput(event, navigator)
     }
 }
 
@@ -317,22 +267,23 @@ class StepProgressDemoScreen : Screen() {
 // Screen — Responsive layout demo
 // =============================================================================
 
-class ResponsiveDemoScreen : Screen() {
+class ResponsiveDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     private val items = (1..10).map { i -> ListEntry.Item("Item $i") }
     private var selectedItemName = "Item 1"
     private var detailState = PagerState(getDetails("Item 1"))
-    private var navigator: Navigator? = null
 
-    private lateinit var leftList: Component
-    private lateinit var rightPager: Component
-    private lateinit var split: Component
+    private fun updateShortcuts() {
+        val w = Terminal.size().dimx
+        val mode = if (w >= 100) "wide (split)" else "narrow (single)"
+        navigator.registerShortcuts(listOf(
+            Shortcut("", "width: $w  mode: $mode", showInStatusBar = true, action = {})
+        ))
+    }
 
-    override val activeWindow get() = if (Terminal.size().dimx >= 100) split else leftList
+    fun build(): Component = context.run {
+        updateShortcuts()
 
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@ResponsiveDemoScreen.navigator = navigator
-        val isWide = { Terminal.size().dimx >= 100 }
-        leftList = list(
+        val leftList = list(
             getEntries = { items },
             renderItem = { s, focused -> if (focused) text("  $s").inverted() else text("  $s") },
             renderHeader = { s -> hbox(text("  $s").bold(), filler()) },
@@ -344,29 +295,24 @@ class ResponsiveDemoScreen : Screen() {
             },
         )
 
-        rightPager = pager(
+        val rightPager = pager(
             getState = { detailState },
         )
 
-        split = split(
+        val split = split(
             left = leftList,
             right = rightPager,
             leftTitle = "Items",
             rightTitle = "Details"
         )
 
-        return renderer {
+        renderer {
+            updateShortcuts()
             responsiveHorizontal(breakpoint = 100,
                 narrow = { leftList },
                 wide   = { split },
             ).render()
         }
-    }
-
-    override fun buildStatusBar(): Element {
-        val w = Terminal.size().dimx
-        val mode = if (w >= 100) "wide (split)" else "narrow (single)"
-        return hbox(text(" "), text("width: $w  mode: $mode").dim(), filler())
     }
 
     private fun getDetails(itemName: String) = listOf(
@@ -408,10 +354,10 @@ sealed class SpinnerDemoEvent {
     data object ResetSpeed : SpinnerDemoEvent()
 }
 
-class SpinnersDemoViewModel : ViewModel<SpinnersDemoState, SpinnerDemoEvent>() {
+class SpinnersDemoViewModel {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val _state = MutableStateFlow(SpinnersDemoState(tick = 0, delayMs = 80L))
-    override val state: StateFlow<SpinnersDemoState> = _state
+    val state: StateFlow<SpinnersDemoState> = _state
     private var job: Job? = null
 
     init {
@@ -434,7 +380,7 @@ class SpinnersDemoViewModel : ViewModel<SpinnersDemoState, SpinnerDemoEvent>() {
         scope.cancel()
     }
 
-    override fun onEvent(event: SpinnerDemoEvent) {
+    fun onEvent(event: SpinnerDemoEvent) {
         when (event) {
             SpinnerDemoEvent.SpeedUp -> {
                 val newDelay = (_state.value.delayMs - 10L).coerceAtLeast(10L)
@@ -451,10 +397,8 @@ class SpinnersDemoViewModel : ViewModel<SpinnersDemoState, SpinnerDemoEvent>() {
     }
 }
 
-class SpinnersDemoScreen : Screen() {
+class SpinnersDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     private val viewModel = SpinnersDemoViewModel()
-    private var navigator: Navigator? = null
-    private lateinit var split: Component
 
     private val categorySpinners = mapOf(
         SpinnerCategory.Classics to listOf(
@@ -538,34 +482,36 @@ class SpinnersDemoScreen : Screen() {
         )
     )
 
-    override val activeWindow get() = split
-
-    override val globalShortcuts get() = listOf(
-        Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
-            viewModel.onEvent(SpinnerDemoEvent.ResetSpeed)
-        },
-        Shortcut("+", "+ Speed+", description = "Increase speed") {
-            viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
-        },
-        Shortcut("-", "- Speed-", description = "Decrease speed") {
-            viewModel.onEvent(SpinnerDemoEvent.SlowDown)
-        },
-        Shortcut("]", "]", showInStatusBar = false, description = "Incre§ase speed") {
-            viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
-        },
-        Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
-            viewModel.onEvent(SpinnerDemoEvent.SlowDown)
-        }
-    )
-
-    override fun AppContext.buildContent(navigator: Navigator): Component {
-        this@SpinnersDemoScreen.navigator = navigator
+    fun build(): Component = context.run {
         var tick by mutableStateOf(0)
         var selectedCategory by mutableStateOf(SpinnerCategory.Classics)
+
+        val updateShortcuts = {
+            val delayMs = viewModel.state.value.delayMs
+            navigator.registerShortcuts(listOf(
+                Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
+                    viewModel.onEvent(SpinnerDemoEvent.ResetSpeed)
+                },
+                Shortcut("+", "+ Speed+", description = "Increase speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+                },
+                Shortcut("-", "- Speed-", description = "Decrease speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+                },
+                Shortcut("]", "]", showInStatusBar = false, description = "Increase speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SpeedUp)
+                },
+                Shortcut("[", "[", showInStatusBar = false, description = "Decrease speed") {
+                    viewModel.onEvent(SpinnerDemoEvent.SlowDown)
+                },
+                Shortcut("", "Speed: ${delayMs}ms  (Use +/- or [/] to adjust)  ", showInStatusBar = true, action = {})
+            ))
+        }
 
         GlobalScope.launch {
             viewModel.state.collect { state ->
                 tick = state.tick
+                updateShortcuts()
             }
         }
 
@@ -624,36 +570,23 @@ class SpinnersDemoScreen : Screen() {
             }
         )
 
-        split = split(
+        val splitComponent = split(
             left = leftList,
             right = rightList,
             leftTitle = "Categories",
             rightTitle = "Spinners"
         )
 
-        return split
-    }
-
-    override fun buildStatusBar(): Element {
-        val delayMs = viewModel.state.value.delayMs
-        val baseStatusBar = super.buildStatusBar()
-        return hbox(
-            baseStatusBar,
-            filler(),
-            text("Speed: ").dim(),
-            text("${delayMs}ms").bold().color(Theme.current.accent),
-            text("  (Use +/- or [/] to adjust)  ").dim()
-        )
-    }
-
-    override fun handleInput(event: FtxUIEvent, navigator: Navigator): Boolean {
-        this.navigator = navigator
-        if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) {
-            viewModel.cancel()
-            navigator.pop()
-            return true
+        renderer(child = splitComponent) {
+            splitComponent.render()
+        }.catchEvent { event ->
+            if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) {
+                viewModel.cancel()
+                navigator.pop()
+                true
+            } else {
+                false
+            }
         }
-        return super.handleInput(event, navigator)
     }
 }
-

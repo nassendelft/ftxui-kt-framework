@@ -46,14 +46,15 @@ fun <T> AppContext.mutableStateOf(initial: T): MutableState<T> =
 
 fun runApp(
     name: String,
-    initialScreen: Screen,
+    initialComponentBuilder: AppContext.(Navigator) -> Component,
     confirmOnQuit: Boolean = false,
     enableCtrlZ: Boolean = false,
 ) {
     val app = FtxUIApp.fullscreen()
     if (enableCtrlZ) app.forceHandleCtrlZ(false)
     val runner = App(name, app, confirmOnQuit = confirmOnQuit)
-    runner.start(initialScreen)
+    val comp = runner.initialComponentBuilder(runner)
+    runner.start(comp)
 }
 
 internal class App(
@@ -62,7 +63,11 @@ internal class App(
     private val confirmOnQuit: Boolean = false,
 ) : AppContext, Navigator {
 
-    private class ScreenEntry(val screen: Screen, val component: Component, val tabIndex: Int)
+    private class ComponentEntry(
+        val component: Component,
+        val tabIndex: Int,
+        var shortcuts: List<Shortcut> = emptyList()
+    )
     private class ToastData(val toast: Toast, @Volatile var progress: Float = 0f)
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -74,7 +79,7 @@ internal class App(
 
     override val terminalSize: Dimension get() = Dimension(Terminal.size().dimx, Terminal.size().dimy)
 
-    private val stack = ArrayDeque<ScreenEntry>()
+    private val stack = ArrayDeque<ComponentEntry>()
     private val tabSelector = IntState(0)
     private val tabContainer = tab(tabSelector)
     private var totalComponentsAdded = 0
@@ -84,7 +89,7 @@ internal class App(
     @Volatile private var activeToasts: List<ToastData> = emptyList()
     @Volatile private var notificationLog: List<NotificationRecord> = emptyList()
 
-    override val currentScreen: Screen? get() = stack.lastOrNull()?.screen
+    override val currentComponent: Component? get() = stack.lastOrNull()?.component
 
     private var showHelp by mutableStateOf(false)
     private var showPalette by mutableStateOf(false)
@@ -120,7 +125,7 @@ internal class App(
                 showPalette = open
                 if (!open) restoreFocus()
             },
-            getShortcuts = { currentScreen?.globalShortcuts ?: emptyList() }
+            getShortcuts = { stack.lastOrNull()?.shortcuts ?: emptyList() }
         )
     }
     private val perfPanel by lazy {
@@ -131,7 +136,36 @@ internal class App(
     }
 
     private fun restoreFocus() {
-        currentScreen?.activeWindow?.takeFocus() ?: tabContainer.takeFocus()
+        currentComponent?.takeFocus() ?: tabContainer.takeFocus()
+    }
+
+    override fun registerShortcuts(shortcuts: List<Shortcut>) {
+        stack.lastOrNull()?.let { entry ->
+            entry.shortcuts = shortcuts
+            app.requestAnimationFrame()
+        }
+    }
+
+    override fun clearShortcuts() {
+        stack.lastOrNull()?.let { entry ->
+            entry.shortcuts = emptyList()
+            app.requestAnimationFrame()
+        }
+    }
+
+    private fun buildStatusBar(): Element {
+        val entry = stack.lastOrNull()
+        val shortcuts = entry?.shortcuts ?: emptyList()
+        val visible = shortcuts.filter { it.showInStatusBar }
+        val elems = buildList {
+            add(text(" "))
+            visible.forEachIndexed { i, sc ->
+                if (i > 0) add(text("  "))
+                add(text(sc.label).dim())
+            }
+            add(filler())
+        }
+        return hbox(*elems.toTypedArray())
     }
 
     private fun createRootComponent(): Component {
@@ -142,7 +176,10 @@ internal class App(
         rootContainer.add(palettePanel.maybe { showPalette })
         rootContainer.add(perfPanel.maybe { showPerfOverlay })
         return renderer(child = rootContainer) {
-            var el = tabContainer.render()
+            var el = vbox(
+                tabContainer.render().flex(),
+                buildStatusBar()
+            )
             buildActiveToastsElement()?.let { el = dbox(el, it) }
             val anyModal = activeDialog != null || showHelp || showPalette ||
                     logPanelOpen || notificationPanelOpen || confirmingQuit
@@ -202,7 +239,7 @@ internal class App(
         }
 
         else -> {
-            val handled = if (logPanelOpen || notificationPanelOpen) false else handleScreenInput(event)
+            val handled = if (logPanelOpen || notificationPanelOpen) false else handleComponentInput(event)
             when {
                 !handled && confirmOnQuit && event.isKey(Key.CtrlC) -> {
                     confirmingQuit = true; true
@@ -264,8 +301,19 @@ internal class App(
         )
     }
 
-    private fun handleScreenInput(event: FtxUIEvent): Boolean =
-        currentScreen?.handleInput(event, this) ?: false
+    private fun handleComponentInput(event: FtxUIEvent): Boolean {
+        val entry = stack.lastOrNull() ?: return false
+        val shortcut = entry.shortcuts.find { event.isKey(it.key) }
+        if (shortcut != null) {
+            shortcut.action()
+            return true
+        }
+        if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) {
+            pop()
+            return true
+        }
+        return false
+    }
 
     private fun buildConfirmQuitElement(): Element {
         val body = vbox(
@@ -284,9 +332,9 @@ internal class App(
     }
 
     private fun buildHelpElement(): Element {
-        val screen = currentScreen
+        val entry = stack.lastOrNull()
         val rows = buildList {
-            screen?.globalShortcuts?.forEach { sc ->
+            entry?.shortcuts?.forEach { sc ->
                 add(hbox(text("  ${sc.label.padEnd(12)} "), text(sc.description).dim(), text("  ")))
             }
             if (stack.size > 1) {
@@ -301,11 +349,10 @@ internal class App(
         return body.window(text(" Keyboard Shortcuts ").bold()).clearUnder().hcenter().vcenter()
     }
 
-    override fun push(screen: Screen) {
-        val component = screen.build(this, this)
+    override fun push(component: Component) {
         tabContainer.add(component)
         val index = totalComponentsAdded++
-        stack.addLast(ScreenEntry(screen, component, index))
+        stack.addLast(ComponentEntry(component, index))
         tabSelector.value = index
         app.requestAnimationFrame()
     }
@@ -354,9 +401,9 @@ internal class App(
         }
     }
 
-    fun start(initialScreen: Screen) {
+    fun start(initialComponent: Component) {
         app.forceHandleCtrlC(!confirmOnQuit)
-        push(initialScreen)
+        push(initialComponent)
         val root = createRootComponent()
         app.loop(root)
         preferences.save()
