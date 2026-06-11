@@ -69,8 +69,7 @@ internal class App(
 
     private class ComponentEntry(
         val component: Component,
-        val tabIndex: Int,
-        var shortcuts: List<Shortcut> = emptyList()
+        val tabIndex: Int
     )
     private class ToastData(val toast: Toast, @Volatile var progress: Float = 0f)
 
@@ -134,27 +133,13 @@ internal class App(
 
     private fun getActiveShortcuts(): List<Shortcut> {
         val entry = stack.lastOrNull() ?: return emptyList()
-        val componentShortcuts = context.navigator.getShortcutsForComponent(entry.component)
-        return entry.shortcuts.ifEmpty { componentShortcuts }
+        return context.navigator.getShortcutsForComponent(entry.component)
     }
 
     private fun restoreFocus() {
         currentComponent?.takeFocus() ?: tabContainer.takeFocus()
     }
 
-    internal fun registerShortcuts(shortcuts: List<Shortcut>) {
-        stack.lastOrNull()?.let { entry ->
-            entry.shortcuts = shortcuts
-            app.requestAnimationFrame()
-        }
-    }
-
-    internal fun clearShortcuts() {
-        stack.lastOrNull()?.let { entry ->
-            entry.shortcuts = emptyList()
-            app.requestAnimationFrame()
-        }
-    }
 
     private fun buildStatusBar(): Element {
         val shortcuts = getActiveShortcuts()

@@ -14,28 +14,19 @@ class Navigator internal constructor(private val app: App) {
     fun notify(message: String, duration: Duration, type: Toast.Type = Toast.Type.Info) =
         app.notify(message, duration, type)
 
-    fun registerShortcuts(shortcuts: List<Shortcut>) = app.registerShortcuts(shortcuts)
-    fun clearShortcuts() = app.clearShortcuts()
-
-    internal fun registerShortcutsForComponent(component: Component, provider: () -> List<Shortcut>) {
+    fun registerShortcutsForComponent(component: Component, provider: () -> List<Shortcut>) {
         shortcutsMap[component] = provider
+    }
+
+    fun registerShortcutsForComponent(component: Component, shortcuts: List<Shortcut>) {
+        shortcutsMap[component] = { shortcuts }
     }
 
     internal fun getShortcutsForComponent(component: Component): List<Shortcut> {
         return shortcutsMap[component]?.invoke() ?: emptyList()
     }
 
-    internal fun removeShortcutsForComponent(component: Component) {
+    fun removeShortcutsForComponent(component: Component) {
         shortcutsMap.remove(component)
     }
-}
-
-fun Component.registerShortcuts(navigator: Navigator, provider: () -> List<Shortcut>): Component {
-    navigator.registerShortcutsForComponent(this, provider)
-    return this
-}
-
-fun Component.registerShortcuts(navigator: Navigator, shortcuts: List<Shortcut>): Component {
-    navigator.registerShortcutsForComponent(this) { shortcuts }
-    return this
 }

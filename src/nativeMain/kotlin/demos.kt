@@ -15,7 +15,7 @@ class TextEditorDemoScreen(private val navigator: Navigator, private val context
     private var editorState = TextEditorState(INITIAL_TEXT)
 
     fun build(): Component = context.run {
-        textEditor(
+        val comp = textEditor(
             content = ::editorText,
             showLineNumbers = true,
             onContentChange = { text ->
@@ -25,7 +25,8 @@ class TextEditorDemoScreen(private val navigator: Navigator, private val context
                 editorState = newState
                 requestRedraw()
             }
-        ).registerShortcuts(navigator) {
+        )
+        navigator.registerShortcutsForComponent(comp) {
             val cursorInfo = "  Ln ${editorState.cursorLine + 1}, Col ${editorState.cursorCol + 1}  "
             listOf(
                 Shortcut(Key.CtrlS, "^S Save", description = "Show current content length", showInStatusBar = true) {
@@ -35,6 +36,7 @@ class TextEditorDemoScreen(private val navigator: Navigator, private val context
                 Shortcut("", cursorInfo, showInStatusBar = true, action = {})
             )
         }
+        comp
     }
 
     companion object {
@@ -242,9 +244,10 @@ class StepProgressDemoScreen(private val navigator: Navigator, private val conte
                 requestRedraw()
             }
         }
-        stepProgress(
+        val comp = stepProgress(
             getState = { viewModel.state.value }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.Return, "Enter Start", description = "Start the pipeline", showInStatusBar = true) {
                 viewModel.onEvent(StepDemoEvent.Start)
             },
@@ -252,6 +255,7 @@ class StepProgressDemoScreen(private val navigator: Navigator, private val conte
                 viewModel.onEvent(StepDemoEvent.Reset)
             },
         ))
+        comp
     }
 }
 
@@ -288,18 +292,20 @@ class ResponsiveDemoScreen(private val navigator: Navigator, private val context
             rightTitle = "Details"
         )
 
-        renderer {
+        val comp = renderer {
             responsiveHorizontal(breakpoint = 100,
                 narrow = { leftList },
                 wide   = { split },
             ).render()
-        }.registerShortcuts(navigator) {
+        }
+        navigator.registerShortcutsForComponent(comp) {
             val w = Terminal.size().dimx
             val mode = if (w >= 100) "wide (split)" else "narrow (single)"
             listOf(
                 Shortcut("", "width: $w  mode: $mode", showInStatusBar = true, action = {})
             )
         }
+        comp
     }
 
     private fun getDetails(itemName: String) = listOf(
@@ -541,7 +547,7 @@ class SpinnersDemoScreen(private val navigator: Navigator, private val context: 
             rightTitle = "Spinners"
         )
 
-        renderer(child = splitComponent) {
+        val comp = renderer(child = splitComponent) {
             splitComponent.render()
         }.catchEvent { event ->
             if (event.isKey(Key.Escape) || event.isKey(Key.Backspace)) {
@@ -551,7 +557,8 @@ class SpinnersDemoScreen(private val navigator: Navigator, private val context: 
             } else {
                 false
             }
-        }.registerShortcuts(navigator) {
+        }
+        navigator.registerShortcutsForComponent(comp) {
             val delayMs = viewModel.state.value.delayMs
             listOf(
                 Shortcut(Key.CtrlR, "^R Reset", description = "Reset speed to 80ms") {
@@ -572,5 +579,6 @@ class SpinnersDemoScreen(private val navigator: Navigator, private val context: 
                 Shortcut("", "Speed: ${delayMs}ms  (Use +/- or [/] to adjust)  ", showInStatusBar = true, action = {})
             )
         }
+        comp
     }
 }

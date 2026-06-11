@@ -98,7 +98,7 @@ class HomeScreen(private val navigator: Navigator, private val context: AppConte
             add(ListEntry.Item(MenuItem("Quit", "")) { navigator.pop() })
         }
 
-        list(
+        val comp = list(
             getEntries = { entries },
             renderItem = { item, focused ->
                 val label = text("  ${item.label.padEnd(20)} ")
@@ -109,11 +109,13 @@ class HomeScreen(private val navigator: Navigator, private val context: AppConte
                 hbox(text("  ─── ${item.label} ───").bold(), filler())
             },
             toSearchString = { it.label }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.CtrlQ, "^Q  Quit", description = "Quit the application", showInStatusBar = false) {
                 navigator.pop()
             },
         ))
+        comp
     }
 }
 
@@ -171,7 +173,7 @@ class FruitListScreen(private val navigator: Navigator, private val context: App
             }
         }
 
-        list(
+        val comp = list(
             getEntries = { buildListState(viewModel.state.value) },
             renderItem = { fruit, focused ->
                 if (focused) hbox(text(" ▶ ").bold(), text(fruit.name)).inverted()
@@ -181,11 +183,13 @@ class FruitListScreen(private val navigator: Navigator, private val context: App
                 hbox(text(" ── ${fruit.name} ──").bold(), filler())
             },
             toSearchString = { it.name }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.CtrlN, "^N  Add", description = "Add a random item to the list") {
                 viewModel.onEvent(FruitListEvent.AddRandom)
             },
         ))
+        comp
     }
 
     private fun buildListState(state: FruitListState): List<ListEntry<Fruit>> {
@@ -216,13 +220,15 @@ class DetailScreen(private val navigator: Navigator, private val context: AppCon
     }
 
     fun build(): Component = context.run {
-        list(
+        val comp = list(
             getEntries = { entries },
             renderItem   = { str, focused -> if (focused) text("  $str").inverted() else text("  $str") },
             renderHeader = { str -> hbox(text(" ─── $str ───").bold(), filler()) }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.CtrlB, "^B  Back", description = "Return to fruit list") { navigator.pop() },
         ))
+        comp
     }
 }
 
@@ -479,7 +485,7 @@ class AsyncDemoScreen(private val navigator: Navigator, private val context: App
             }
         }
 
-        mainComp.registerShortcuts(navigator) {
+        navigator.registerShortcutsForComponent(mainComp) {
             if (state is AsyncState.Error) {
                 listOf(
                     Shortcut("r", "r Retry", description = "Retry loading") {
@@ -490,6 +496,7 @@ class AsyncDemoScreen(private val navigator: Navigator, private val context: App
                 emptyList()
             }
         }
+        mainComp
     }
 }
 
@@ -554,16 +561,18 @@ class TreeDemoScreen(private val navigator: Navigator, private val context: AppC
                 requestRedraw()
             }
         }
-        tree(
+        val comp = tree(
             getState = { TreeState(withCallbacks(viewModel.state.value.roots, emptyList())) },
             renderNode = { label, _, focused, _, _ ->
                 if (focused) text(label).inverted() else text(label)
             }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.CtrlR, "^R  Collapse all", description = "Collapse all top-level nodes") {
                 viewModel.onEvent(TreeDemoEvent.CollapseAll)
             },
         ))
+        comp
     }
 
     private fun withCallbacks(nodes: StringTree, prefix: List<Int>): StringTree =
@@ -586,7 +595,7 @@ data class FruitRow(val name: String, val category: String, val length: Int)
 
 class TableDemoScreen(private val navigator: Navigator, private val context: AppContext) {
     fun build(): Component = context.run {
-        table(
+        val comp = table(
             getRows = { FRUIT_ROWS },
             columns = listOf(
                 TableColumn("Name", extract = { it.name }),
@@ -613,9 +622,11 @@ class TableDemoScreen(private val navigator: Navigator, private val context: App
             onEnter = { row ->
                 Logger.info("Selected: ${row.name} (${row.category})")
             }
-        ).registerShortcuts(navigator, listOf(
+        )
+        navigator.registerShortcutsForComponent(comp, listOf(
             Shortcut(Key.CtrlB, "^B  Back", description = "Return to home") { navigator.pop() },
         ))
+        comp
     }
 
     companion object {
