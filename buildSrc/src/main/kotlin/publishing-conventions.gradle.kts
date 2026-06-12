@@ -49,9 +49,12 @@ publishing {
     }
 }
 
-signing {
-    useInMemoryPgpKeys(System.getenv("PGP_KEY"), System.getenv("PGP_PASSWORD"))
-    publishing.publications.withType<MavenPublication>().all { sign(this@all) }
+val pgpKey = System.getenv("PGP_KEY")
+if (!pgpKey.isNullOrEmpty()) {
+    signing {
+        useInMemoryPgpKeys(pgpKey, System.getenv("PGP_PASSWORD"))
+        publishing.publications.withType<MavenPublication>().all { sign(this@all) }
+    }
 }
 
 val publishAllPublicationsToSonatype by tasks.registering {

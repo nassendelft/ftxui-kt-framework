@@ -9,10 +9,11 @@ internal fun AppContext.commandPalette(
 ): Component {
     var query by mutableStateOf("")
     var cursor by mutableStateOf(0)
+    var startIndex by mutableStateOf(0)
     var lastOpen = false
 
     fun filteredItems(): List<Shortcut> {
-        val shortcuts = getShortcuts()
+        val shortcuts = getShortcuts().distinctBy { it.label }
         if (query.isEmpty()) return shortcuts
         val q = query.lowercase()
         return shortcuts.filter { it.label.lowercase().contains(q) || it.description.lowercase().contains(q) }
@@ -23,12 +24,15 @@ internal fun AppContext.commandPalette(
         if (open && !lastOpen) {
             query = ""
             cursor = 0
+            startIndex = 0
         }
         lastOpen = open
 
         val items = filteredItems()
         val maxVisible = 8
-        val labelWidth = (items.take(maxVisible).maxOfOrNull { it.label.length } ?: 8).coerceAtLeast(8)
+        val start = startIndex.coerceIn(0, maxOf(0, items.size - maxVisible))
+        val visibleItems = items.drop(start).take(maxVisible)
+        val labelWidth = (visibleItems.maxOfOrNull { it.label.length } ?: 8).coerceAtLeast(8)
         val queryEl = hbox(
             text("> ").color(Theme.current.accent).bold(),
             text(query),
@@ -37,8 +41,8 @@ internal fun AppContext.commandPalette(
         val rows: List<Element> = if (items.isEmpty()) {
             listOf(hbox(text("  "), text("No matching commands").color(Theme.current.warning).dim(), text("  ")))
         } else {
-            items.take(maxVisible).mapIndexed { i, sc ->
-                val isFocused = i == cursor
+            visibleItems.mapIndexed { i, sc ->
+                val isFocused = (start + i) == cursor
                 if (isFocused) {
                     hbox(
                         text(" ▶ ").color(Theme.current.accent).bold(),
@@ -58,6 +62,7 @@ internal fun AppContext.commandPalette(
     return base.catchEvent { event ->
         if (!isOpen()) return@catchEvent false
         val items = filteredItems()
+        val maxVisible = 8
         when {
             event.isKey(Key.Escape) -> {
                 onToggle(false)
@@ -72,11 +77,19 @@ internal fun AppContext.commandPalette(
 
             event.isKey(Key.ArrowUp) -> {
                 cursor = (cursor - 1).coerceAtLeast(0)
+                val start = startIndex.coerceIn(0, maxOf(0, items.size - maxVisible))
+                if (cursor < start) {
+                    startIndex = cursor
+                }
                 true
             }
 
             event.isKey(Key.ArrowDown) -> {
                 cursor = (cursor + 1).coerceAtMost(maxOf(0, items.lastIndex))
+                val start = startIndex.coerceIn(0, maxOf(0, items.size - maxVisible))
+                if (cursor >= start + maxVisible) {
+                    startIndex = cursor - maxVisible + 1
+                }
                 true
             }
 
@@ -84,6 +97,7 @@ internal fun AppContext.commandPalette(
                 if (query.isNotEmpty()) {
                     query = query.dropLast(1)
                     cursor = 0
+                    startIndex = 0
                 }
                 true
             }
@@ -91,6 +105,7 @@ internal fun AppContext.commandPalette(
             event is FtxUIEvent.Character -> {
                 query += event.character
                 cursor = 0
+                startIndex = 0
                 true
             }
             else -> true

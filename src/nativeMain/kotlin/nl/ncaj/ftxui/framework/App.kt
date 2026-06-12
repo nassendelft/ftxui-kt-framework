@@ -151,7 +151,15 @@ internal class App(
             add(text(" "))
             visible.forEachIndexed { i, sc ->
                 if (i > 0) add(text("  "))
-                add(text(sc.label).dim())
+                val (keyPart, labelPart) = sc.getShortcutDisplay()
+                if (keyPart.isNotEmpty()) {
+                    add(hbox(
+                        text("[$keyPart] ").color(Theme.current.accent).bold(),
+                        sc.labelElement(labelPart)
+                    ))
+                } else {
+                    add(sc.labelElement(labelPart))
+                }
             }
             add(filler())
         }
@@ -325,7 +333,10 @@ internal class App(
         val shortcuts = getActiveShortcuts()
         val rows = buildList {
             shortcuts.forEach { sc ->
-                add(hbox(text("  ${sc.label.padEnd(12)} "), text(sc.description).dim(), text("  ")))
+                val (keyPart, labelPart) = sc.getShortcutDisplay()
+                val displayKey = if (keyPart.isNotEmpty()) "[$keyPart]" else labelPart
+                val displayDesc = if (keyPart.isNotEmpty()) labelPart else sc.description
+                add(hbox(text("  ${displayKey.padEnd(12)} "), text(displayDesc).dim(), text("  ")))
             }
             if (stack.size > 1) {
                 add(hbox(text("  Esc          "), text("go back").dim(), text("  ")))
