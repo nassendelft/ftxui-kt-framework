@@ -147,6 +147,7 @@ internal class App(
     private fun buildStatusBar(): Element {
         val shortcuts = getActiveShortcuts()
         val visible = shortcuts.filter { it.showInStatusBar }
+        if (visible.isEmpty()) return emptyElement()
         val elems = buildList {
             add(text(" "))
             visible.forEachIndexed { i, sc ->
